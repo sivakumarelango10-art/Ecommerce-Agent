@@ -1,0 +1,10 @@
+crewai
+crewai-tools[mcp]
+mcp
+openai
+streamlit
+fastapi
+uvicorn
+pandas
+openpyxl
+python-dotenv
