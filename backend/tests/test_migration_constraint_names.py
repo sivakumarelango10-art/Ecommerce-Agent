@@ -19,6 +19,7 @@ EXPECTED_CONSTRAINT_NAMES = {
     "inventory": "ck_inventory_available_quantity_nonnegative",
     "addresses": "ck_addresses_country_code_length",
 }
+MIGRATION_REVISION = "0002_constraint_names"
 OLD_CONSTRAINT_NAMES = {
     "products": "ck_products_ck_products_price_nonnegative",
     "inventory": "ck_inventory_ck_inventory_available_quantity_nonnegative",
@@ -71,6 +72,15 @@ def test_model_check_constraint_names_follow_metadata_convention() -> None:
         assert names == {expected_name}
 
 
+def test_migration_revision_fits_alembic_version_column() -> None:
+    migration = _load_revision(
+        "0002_normalize_check_constraint_names.py",
+        "phase_3_1_revision_0002_length",
+    )
+    assert migration.revision == MIGRATION_REVISION
+    assert len(migration.revision) <= 32
+
+
 @pytest.mark.skipif(
     not os.environ.get("PHASE_3_1_TEST_DATABASE_URL"),
     reason="Set PHASE_3_1_TEST_DATABASE_URL to an isolated local PostgreSQL test database.",
@@ -104,6 +114,20 @@ def test_postgresql_migration_renames_constraints_without_changing_definitions()
                     )
                 ):
                     revision_0001.upgrade()
+
+                connection.execute(
+                    text(
+                        "CREATE TABLE public.alembic_version ("
+                        "version_num VARCHAR(32) NOT NULL PRIMARY KEY)"
+                    )
+                )
+                connection.execute(
+                    text(
+                        "INSERT INTO public.alembic_version (version_num) "
+                        "VALUES (:revision)"
+                    ),
+                    {"revision": revision_0001.revision},
+                )
 
                 before = _check_constraint_definitions(connection)
                 expected_old = {
@@ -151,6 +175,16 @@ def test_postgresql_migration_renames_constraints_without_changing_definitions()
                     )
                 ):
                     revision_0002.upgrade()
+
+                connection.execute(
+                    text(
+                        "UPDATE public.alembic_version SET version_num = :revision"
+                    ),
+                    {"revision": revision_0002.revision},
+                )
+                assert connection.execute(
+                    text("SELECT version_num FROM public.alembic_version")
+                ).scalar_one() == MIGRATION_REVISION
 
                 after = _check_constraint_definitions(connection)
                 expected_new = {

@@ -5,7 +5,7 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0002_normalize_check_constraint_names"
+revision: str = "0002_constraint_names"
 down_revision: Union[str, None] = "0001_database_foundation"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
