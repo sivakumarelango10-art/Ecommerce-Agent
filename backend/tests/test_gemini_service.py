@@ -42,6 +42,8 @@ class FakeClient:
 def service_factory(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-sent")
     monkeypatch.setenv("GEMINI_MODEL", "test-gemini-model")
+    monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///:memory:")
+    monkeypatch.setenv("AUTH_SECRET_KEY", "test-auth-secret-key-0123456789abcdef")
 
     def create(outcome: object) -> tuple[GeminiService, FakeClient]:
         client = FakeClient(outcome)
@@ -107,12 +109,14 @@ def test_missing_api_key_is_rejected(monkeypatch: pytest.MonkeyPatch):
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
 
-    with pytest.raises(ConfigurationError, match="Gemini configuration is invalid"):
+    with pytest.raises(ConfigurationError, match="Application configuration is invalid"):
         load_settings(env_file=None)
 
 
 def test_default_model_is_gemini_38_flash(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-sent")
+    monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///:memory:")
+    monkeypatch.setenv("AUTH_SECRET_KEY", "test-auth-secret-key-0123456789abcdef")
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
 
     assert Settings(_env_file=None).gemini_model == "gemini-3.8-flash"
