@@ -108,7 +108,14 @@ def test_missing_api_key_is_rejected(monkeypatch: pytest.MonkeyPatch):
         Settings(_env_file=None)
 
     with pytest.raises(ConfigurationError, match="Gemini configuration is invalid"):
-        load_settings()
+        load_settings(env_file=None)
+
+
+def test_default_model_is_gemini_38_flash(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-sent")
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+
+    assert Settings(_env_file=None).gemini_model == "gemini-3.8-flash"
 
 
 def test_api_failure_is_mapped_to_provider_error(service_factory):

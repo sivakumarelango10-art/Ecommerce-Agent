@@ -33,4 +33,4 @@ def test_application_source_and_dependency_manifests_are_gemini_only():
 
     env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
     assert "GEMINI_API_KEY=" in env_example
-    assert "GEMINI_MODEL=" in env_example
+    assert "GEMINI_MODEL=gemini-3.8-flash" in env_example

@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from google.genai import errors
 
-from backend.app.core.config import ConfigurationError
+from backend.app.core.config import ConfigurationError, load_settings
 from backend.app.main import create_app
 from backend.app.services import gemini_service
 
@@ -120,7 +120,7 @@ def test_gemini_timeout_returns_gateway_timeout(api_client):
 
 def test_configuration_error_prevents_startup(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    app = create_app()
+    app = create_app(settings_loader=lambda: load_settings(env_file=None))
 
     with pytest.raises(ConfigurationError, match="Gemini configuration is invalid"):
         with TestClient(app):

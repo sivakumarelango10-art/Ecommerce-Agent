@@ -15,7 +15,7 @@ class Settings(BaseSettings):
 
     gemini_api_key: SecretStr = Field(validation_alias="GEMINI_API_KEY")
     gemini_model: str = Field(
-        default="gemini-2.5-flash",
+        default="gemini-3.8-flash",
         min_length=1,
         validation_alias="GEMINI_MODEL",
     )
@@ -41,9 +41,9 @@ class Settings(BaseSettings):
         return value.strip()
 
 
-def load_settings() -> Settings:
+def load_settings(*, env_file: str | None = ".env") -> Settings:
     try:
-        return Settings()
+        return Settings(_env_file=env_file)
     except ValidationError as exc:
         raise ConfigurationError(
             "Gemini configuration is invalid. Set GEMINI_API_KEY and check GEMINI_MODEL."

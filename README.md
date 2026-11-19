@@ -22,7 +22,7 @@ Copy-Item .env.example .env
 ```
 
 Set `GEMINI_API_KEY` in `.env`. `GEMINI_MODEL` defaults to
-`gemini-2.5-flash` and can be changed there.
+`gemini-3.8-flash` and can be changed there.
 
 ## Run the API
 
