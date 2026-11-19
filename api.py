@@ -1,20 +1,5 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
-from agent import crew
+"""Backward-compatible import for ``uvicorn api:app``."""
 
-app = FastAPI(title="E-commerce Order Agent API")
+from backend.app.main import app
 
-
-class Question(BaseModel):
-    question: str
-
-
-@app.get("/")
-def home():
-    return {"message": "Order agent API is running. POST your question to /ask"}
-
-
-@app.post("/ask")
-def ask(body: Question):
-    result = crew.kickoff(inputs={"question": body.question})
-    return {"question": body.question, "answer": result.raw}
+__all__ = ["app"]
