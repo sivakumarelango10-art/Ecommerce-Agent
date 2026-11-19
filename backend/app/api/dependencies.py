@@ -2,6 +2,7 @@ from typing import Protocol
 
 from fastapi import HTTPException, Request, status
 
+from backend.app.core.config import Settings
 
 class QuestionAnswerer(Protocol):
     def answer(self, question: str) -> str: ...
@@ -15,3 +16,7 @@ def get_gemini_service(request: Request) -> QuestionAnswerer:
             detail="Gemini service is unavailable.",
         )
     return service
+
+
+def get_settings(request: Request) -> Settings:
+    return request.app.state.settings
