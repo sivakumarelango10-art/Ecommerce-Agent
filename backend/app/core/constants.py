@@ -62,3 +62,7 @@ POLICY_UNAVAILABLE_MESSAGE = (
     "shipping timelines, and warranty terms) is not currently available. "
     "Please contact customer support for verified policy details."
 )
+
+CATALOGUE_UNAVAILABLE_MESSAGE = (
+    "Our product catalogue is temporarily unavailable. Please try again later."
+)

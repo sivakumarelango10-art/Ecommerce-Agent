@@ -6,15 +6,20 @@ from google.genai import types
 from sqlalchemy.orm import Session
 
 from backend.app.core.constants import (
+    CATALOGUE_UNAVAILABLE_MESSAGE,
     DEFAULT_CATALOGUE_CURRENCY,
     POLICY_UNAVAILABLE_MESSAGE,
 )
 from backend.app.schemas.shopping import (
     ShoppingSearchRequest,
+    ShoppingSearchResponse,
     SupervisorRouteResponse,
 )
 from backend.app.services.gemini_service import GeminiService
-from backend.app.services.shopping_agent import ShoppingAgent
+from backend.app.services.shopping_agent import (
+    ShoppingAgent,
+    _fallback_extract_intent,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +42,7 @@ _POLICY_PATTERNS = [
     re.compile(r"\b(?:return\s+window|days\s+to\s+return|money\s+back\s+guarantee)\b", re.IGNORECASE),
     re.compile(r"\b(?:how\s+(?:long|many\s+days)\s+do\s+i\s+have\s+to\s+return)\b", re.IGNORECASE),
     re.compile(r"\b(?:do\s+you\s+(?:offer|have)\s+(?:a\s+)?warranty)\b", re.IGNORECASE),
-    re.compile(r"\b(?:what\s+is\s+the\s+warranty|how\s+does\s+shipping\s+work)\b", re.IGNORECASE),
+    re.compile(r"\b(?:what\s+is\s+the\s+warranty|how\s+does\s+(?:shipping|delivery)\s+work)\b", re.IGNORECASE),
     re.compile(r"\b(?:can\s+i\s+get\s+a\s+refund|how\s+do\s+returns\s+work)\b", re.IGNORECASE),
 ]
 
@@ -136,9 +141,17 @@ class SupervisorAgent:
                     return "general_assistant", 0.9, reason
         except Exception as exc:
             logger.warning(
-                "Gemini supervisor routing failed, defaulting to general assistant",
+                "Gemini supervisor routing failed, falling back to deterministic heuristics",
                 extra={"event": "supervisor_route_fallback", "error": str(exc)},
             )
+            fallback_intent = _fallback_extract_intent(clean)
+            if fallback_intent.is_shopping_intent and (
+                fallback_intent.keywords
+                or fallback_intent.min_budget is not None
+                or fallback_intent.max_budget is not None
+                or fallback_intent.category
+            ):
+                return "shopping_agent", 0.7, "Fallback heuristic identified shopping request."
 
         return "general_assistant", 0.5, "Default fallback to general assistant."
 
@@ -161,7 +174,23 @@ class SupervisorAgent:
 
         if destination == "shopping_agent":
             req = ShoppingSearchRequest(query=message)
-            shopping_resp = self._shopping_agent.search(req, session)
+            try:
+                shopping_resp = self._shopping_agent.search(req, session)
+            except Exception as exc:
+                logger.error(
+                    "Catalogue search failed in supervisor",
+                    extra={"event": "supervisor_catalogue_search_error", "error_type": type(exc).__name__},
+                )
+                shopping_resp = ShoppingSearchResponse(
+                    query=message,
+                    currency=self._catalogue_currency,
+                    status="no_results",
+                    message=CATALOGUE_UNAVAILABLE_MESSAGE,
+                    products=[],
+                    total_count=0,
+                    limit=req.limit,
+                    offset=req.offset,
+                )
             return SupervisorRouteResponse(
                 destination="shopping_agent",
                 confidence=confidence,
