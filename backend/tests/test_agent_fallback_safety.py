@@ -363,3 +363,120 @@ def test_shopping_agent_intent_parse_error_logging_sanitized(caplog):
             assert not hasattr(record, "error")
 
     assert found_parse_error_log is True
+
+
+# --- 8. Privacy-Log Sanitization Tests ---
+
+def test_supervisor_routing_logging_does_not_leak_gemini_reason(caplog):
+    """Verify that Gemini routing reason containing sensitive tokens is never logged in supervisor_routed."""
+    import logging
+    from types import SimpleNamespace
+
+    fake_secret = "ConfidentialCustomerReason_SSN_111_22_3333_DO_NOT_LOG"
+    fake_call = SimpleNamespace(
+        name="handoff_to_shopping_agent",
+        args={"query": "my request", "reason": f"Routing based on sensitive details: {fake_secret}"},
+    )
+    mock_result = SimpleNamespace(function_calls=[fake_call])
+
+    mock_gemini = MagicMock()
+    mock_gemini.generate.return_value = mock_result
+
+    supervisor = SupervisorAgent(mock_gemini, catalogue_currency="INR")
+
+    with caplog.at_level(logging.INFO):
+        # Use a query that does not hit deterministic patterns so it invokes Gemini routing
+        dest, conf, reason = supervisor.route("can someone guide me with special personal advice")
+        resp = supervisor.process("can someone guide me with special personal advice", session=None)
+
+    # 1. API response reason still contains the explanation
+    assert fake_secret in reason
+    assert fake_secret in resp.reason
+
+    # 2. But the sensitive reason is NOT in any logs
+    assert fake_secret not in caplog.text
+    found_routed_log = False
+    for record in caplog.records:
+        if getattr(record, "event", None) == "supervisor_routed":
+            found_routed_log = True
+            assert not hasattr(record, "reason")
+            assert getattr(record, "destination", None) == "shopping_agent"
+            assert getattr(record, "confidence", None) == 0.9
+
+    assert found_routed_log is True
+
+
+def test_product_discovery_logging_does_not_leak_category(caplog):
+    """Verify that catalogue search logging does not log raw user-supplied category names."""
+    import logging
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from backend.app.db.base import Base
+    from backend.app.services.product_discovery_service import search_catalogue_products
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session = Session(engine)
+
+    fake_secret_cat = "SensitiveMedicalCondition_CancerTreatment_DO_NOT_LOG"
+
+    try:
+        with caplog.at_level(logging.INFO):
+            products, total = search_catalogue_products(
+                session,
+                category=fake_secret_cat,
+                min_price=Decimal("10.00"),
+                max_price=Decimal("50.00"),
+            )
+
+        assert fake_secret_cat not in caplog.text
+        found_search_log = False
+        for record in caplog.records:
+            if getattr(record, "event", None) == "catalogue_search":
+                found_search_log = True
+                assert not hasattr(record, "category")
+                assert getattr(record, "has_category", None) is True
+                assert getattr(record, "has_min_price", None) is True
+                assert getattr(record, "has_max_price", None) is True
+        assert found_search_log is True
+    finally:
+        session.close()
+        engine.dispose()
+
+
+def test_unsupported_currency_logging_does_not_leak_user_supplied_currency(caplog):
+    """Verify that unsupported currency logging does not leak raw user-supplied currency strings."""
+    import logging
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from backend.app.db.base import Base
+    from backend.app.services.shopping_agent import ShoppingAgent
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session = Session(engine)
+
+    fake_secret_curr = "FAKE_KEY"
+    agent_inst = ShoppingAgent(catalogue_currency="INR")
+
+    try:
+        with caplog.at_level(logging.INFO):
+            resp = agent_inst.search(
+                ShoppingSearchRequest(category="audio", currency=fake_secret_curr),
+                session,
+            )
+
+        assert resp.status == "unsupported_currency"
+        assert fake_secret_curr in resp.message
+        assert fake_secret_curr not in caplog.text
+
+        found_currency_log = False
+        for record in caplog.records:
+            if getattr(record, "event", None) == "unsupported_currency":
+                found_currency_log = True
+                assert not hasattr(record, "requested_currency")
+                assert getattr(record, "catalogue_currency", None) == "INR"
+        assert found_currency_log is True
+    finally:
+        session.close()
+        engine.dispose()

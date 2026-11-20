@@ -138,9 +138,9 @@ def search_catalogue_products(
         extra={
             "event": "catalogue_search",
             "terms_count": len(terms),
-            "category": category,
-            "min_price": str(min_price) if min_price is not None else None,
-            "max_price": str(max_price) if max_price is not None else None,
+            "has_category": bool(category and category.strip()),
+            "has_min_price": min_price is not None,
+            "has_max_price": max_price is not None,
             "in_stock_only": in_stock_only,
             "total_count": total_count,
             "returned_count": len(products),

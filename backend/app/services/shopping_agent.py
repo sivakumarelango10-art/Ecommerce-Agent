@@ -301,7 +301,6 @@ class ShoppingAgent:
                     "Unsupported currency requested",
                     extra={
                         "event": "unsupported_currency",
-                        "requested_currency": requested_currency,
                         "catalogue_currency": self._catalogue_currency,
                     },
                 )

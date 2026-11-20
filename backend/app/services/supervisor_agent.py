@@ -170,7 +170,6 @@ class SupervisorAgent:
                 "event": "supervisor_routed",
                 "destination": destination,
                 "confidence": confidence,
-                "reason": reason,
             },
         )
 
