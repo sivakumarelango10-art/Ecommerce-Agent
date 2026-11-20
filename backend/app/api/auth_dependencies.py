@@ -37,3 +37,17 @@ def get_current_user(
     if user is None or not user.is_active:
         raise unauthorized
     return user
+
+
+def get_optional_current_user(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    session: Session = Depends(get_db_session),
+) -> User | None:
+    """Return authenticated User if Bearer token is provided, or None for guests.
+
+    Raises 401 if a token is provided but is invalid or expired.
+    """
+    if credentials is None:
+        return None
+    return get_current_user(request, credentials=credentials, session=session)
