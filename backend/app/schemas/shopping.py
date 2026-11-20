@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from backend.app.core.constants import CATALOGUE_CURRENCY
+from backend.app.core.constants import DEFAULT_CATALOGUE_CURRENCY
 from backend.app.schemas.catalog import ProductCategoryResponse
 
 
@@ -44,7 +44,7 @@ class ShoppingIntent(BaseModel):
     )
     currency: str | None = Field(
         default=None,
-        description="Currency code, for example USD.",
+        description="Currency code, for example INR.",
     )
     brand: str | None = Field(
         default=None,
@@ -120,7 +120,7 @@ class ShoppingProductItem(BaseModel):
     name: str
     description: str | None
     price: Decimal = Field(max_digits=12, decimal_places=2)
-    currency: str = CATALOGUE_CURRENCY
+    currency: str = DEFAULT_CATALOGUE_CURRENCY
     categories: list[ProductCategoryResponse]
     in_stock: bool
     available_quantity: int = Field(ge=0)
@@ -130,7 +130,7 @@ class ShoppingProductItem(BaseModel):
 class ShoppingSearchResponse(BaseModel):
     query: str | None = None
     intent: ShoppingIntent | None = None
-    currency: str = CATALOGUE_CURRENCY
+    currency: str = DEFAULT_CATALOGUE_CURRENCY
     status: Literal[
         "success", "no_results", "insufficient_information", "unsupported_currency"
     ] = "success"

@@ -21,9 +21,9 @@ logger = logging.getLogger(__name__)
 # Deterministic patterns indicating shopping / catalogue search
 _SHOPPING_PATTERNS = [
     re.compile(r"\b(?:buy|purchase|shop|shopping|browse|find|search|looking for|recommend)\b", re.IGNORECASE),
-    re.compile(r"\b(?:price|cost|budget|under \$?|below \$?|less than \$?|in stock|available)\b", re.IGNORECASE),
+    re.compile(r"\b(?:price|cost|budget|under|below|less than|in stock|available)\b", re.IGNORECASE),
     re.compile(r"\b(?:product|products|item|items|catalogue|catalog|shoes|laptop|phone|headphones)\b", re.IGNORECASE),
-    re.compile(r"\$\d+", re.IGNORECASE),
+    re.compile(r"(?:[\$€£₹¥]|rs\.?)\s*\d+", re.IGNORECASE),
 ]
 
 # Deterministic patterns indicating general informational / advice questions

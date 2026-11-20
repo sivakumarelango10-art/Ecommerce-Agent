@@ -423,11 +423,13 @@ def test_grounded_explanations(isolated_db: Session):
         isolated_db,
     )
     assert resp.status == "success"
+    assert resp.currency == "INR"
     assert len(resp.products) == 1
     item = resp.products[0]
     assert item.sku == "ANK-SND-01"
+    assert item.currency == "INR"
     assert item.recommendation_reason is not None
-    assert "$49.99" in item.recommendation_reason
+    assert "₹49.99" in item.recommendation_reason
     assert "in stock" in item.recommendation_reason
     assert "25 available" in item.recommendation_reason
 
@@ -608,16 +610,16 @@ def test_api_shopping_search_currency_mismatch_returns_unsupported(api_client):
 
     response = client.post(
         "/api/v1/shopping/search",
-        json={"currency": "INR", "max_price": 5000.0},
+        json={"currency": "USD", "max_price": 5000.0},
     )
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "unsupported_currency"
-    assert data["currency"] == "USD"
+    assert data["currency"] == "INR"
     assert data["products"] == []
     assert data["total_count"] == 0
-    assert "INR" in data["message"]
     assert "USD" in data["message"]
+    assert "INR" in data["message"]
 
 
 def test_api_shopping_search_min_quantity_support(api_client):
@@ -704,14 +706,15 @@ def test_sql_injection_safety(isolated_db: Session):
 def test_currency_mismatch_returns_unsupported_currency_response(isolated_db: Session):
     agent = ShoppingAgent()
 
-    # Mismatch via explicit request currency
-    req1 = ShoppingSearchRequest(category="audio", max_price=Decimal("5000"), currency="INR")
+    # Mismatch via explicit request currency USD
+    req1 = ShoppingSearchRequest(category="audio", max_price=Decimal("5000"), currency="USD")
     resp1 = agent.search(req1, isolated_db)
     assert resp1.status == "unsupported_currency"
     assert resp1.total_count == 0
     assert resp1.products == []
+    assert resp1.currency == "INR"
+    assert "USD" in resp1.message
     assert "INR" in resp1.message
-    assert CATALOGUE_CURRENCY in resp1.message
     assert "not supported" in resp1.message
 
     # Mismatch via natural language query with EUR
@@ -726,32 +729,48 @@ def test_currency_mismatch_returns_unsupported_currency_response(isolated_db: Se
     resp2 = agent_eur.search(ShoppingSearchRequest(query="headphones under 50 euros"), isolated_db)
     assert resp2.status == "unsupported_currency"
     assert resp2.total_count == 0
+    assert resp2.currency == "INR"
     assert "EUR" in resp2.message
+    assert "INR" in resp2.message
 
-    # Mismatch via fallback extraction of rupees
+    # Mismatch via fallback extraction of dollars
     agent_fallback = ShoppingAgent()
-    resp3 = agent_fallback.search(ShoppingSearchRequest(query="headphones under 3000 rupees"), isolated_db)
+    resp3 = agent_fallback.search(ShoppingSearchRequest(query="headphones under 100 dollars"), isolated_db)
     assert resp3.status == "unsupported_currency"
+    assert resp3.currency == "INR"
+    assert "USD" in resp3.message
     assert "INR" in resp3.message
 
 
 def test_supported_currency_searches_catalogue(isolated_db: Session):
     agent = ShoppingAgent()
 
-    # Supported currency "USD"
-    req_usd = ShoppingSearchRequest(category="audio", max_price=Decimal("100.00"), currency="USD")
-    resp_usd = agent.search(req_usd, isolated_db)
-    assert resp_usd.status == "success"
-    assert resp_usd.currency == "USD"
-    assert len(resp_usd.products) == 1
-    assert resp_usd.products[0].sku == "ANK-SND-01"
+    # Supported currency "INR"
+    req_inr = ShoppingSearchRequest(category="audio", max_price=Decimal("100.00"), currency="INR")
+    resp_inr = agent.search(req_inr, isolated_db)
+    assert resp_inr.status == "success"
+    assert resp_inr.currency == "INR"
+    assert len(resp_inr.products) == 1
+    assert resp_inr.products[0].sku == "ANK-SND-01"
 
-    # Supported currency "$"
-    req_symbol = ShoppingSearchRequest(category="audio", max_price=Decimal("100.00"), currency="$")
+    # Supported currency "₹"
+    req_symbol = ShoppingSearchRequest(category="audio", max_price=Decimal("100.00"), currency="₹")
     resp_symbol = agent.search(req_symbol, isolated_db)
     assert resp_symbol.status == "success"
-    assert resp_symbol.currency == "USD"
+    assert resp_symbol.currency == "INR"
     assert len(resp_symbol.products) == 1
+
+    # Supported currency "RS"
+    req_rs = ShoppingSearchRequest(category="audio", max_price=Decimal("100.00"), currency="RS")
+    resp_rs = agent.search(req_rs, isolated_db)
+    assert resp_rs.status == "success"
+    assert resp_rs.currency == "INR"
+
+    # Supported currency "Rupees"
+    req_rupees = ShoppingSearchRequest(category="audio", max_price=Decimal("100.00"), currency="Rupees")
+    resp_rupees = agent.search(req_rupees, isolated_db)
+    assert resp_rupees.status == "success"
+    assert resp_rupees.currency == "INR"
 
 
 # --- 14. Stock Preference Precedence Tests ---
@@ -952,6 +971,15 @@ def test_missing_policy_information_returns_unavailable_message(isolated_db: Ses
 
 # --- 18. Catalogue Currency Source of Truth & Grouped Number Tests ---
 
+def test_settings_catalogue_currency_default_is_inr():
+    s = Settings(
+        gemini_api_key="test-key",
+        database_url="postgresql+psycopg://user:pass@localhost:5432/test",
+        auth_secret_key="test-secret-at-least-32-characters-long",
+    )
+    assert s.catalogue_currency == "INR"
+
+
 @pytest.mark.parametrize("valid_code", ["USD", "usd", "INR", "inr", "EUR", "eur", "GBP", "JPY", "CAD", "AUD"])
 def test_settings_catalogue_currency_valid(valid_code: str):
     s = Settings(
@@ -974,31 +1002,74 @@ def test_settings_catalogue_currency_invalid(invalid_code: str):
         )
 
 
+def test_ambiguous_query_with_currency_mismatch_returns_unsupported(isolated_db: Session):
+    agent = ShoppingAgent()
+    # Query is ambiguous ("buy something") but explicitly requests USD / dollars
+    resp = agent.search(ShoppingSearchRequest(query="buy something in dollars"), isolated_db)
+    assert resp.status == "unsupported_currency"
+    assert resp.currency == "INR"
+    assert "USD" in resp.message
+    assert "INR" in resp.message
+
+    # Explicit currency USD with ambiguous query
+    resp2 = agent.search(ShoppingSearchRequest(query="buy something", currency="USD"), isolated_db)
+    assert resp2.status == "unsupported_currency"
+    assert resp2.currency == "INR"
+
+    # Query with ambiguous words but 50 euros
+    resp3 = agent.search(ShoppingSearchRequest(query="shop something with 50 euros"), isolated_db)
+    assert resp3.status == "unsupported_currency"
+    assert resp3.currency == "INR"
+    assert "EUR" in resp3.message
+
+
 def test_fallback_extract_intent_grouped_numbers():
-    # $1,000 -> max_budget 1000, keywords ['laptop']
-    intent1 = _fallback_extract_intent("laptop under $1,000")
-    assert intent1.max_budget == Decimal("1000")
-    assert intent1.currency == "USD"
-    assert "laptop" in intent1.keywords
+    # ₹70,000 -> max_budget 70000, keywords ['phone']
+    intent1 = _fallback_extract_intent("phone under ₹70,000")
+    assert intent1.max_budget == Decimal("70000")
+    assert intent1.currency == "INR"
+    assert "phone" in intent1.keywords
     assert "000" not in intent1.keywords
 
-    # ₹70,000 -> max_budget 70000, keywords ['phone']
-    intent2 = _fallback_extract_intent("phone under ₹70,000")
-    assert intent2.max_budget == Decimal("70000")
+    # ₹1,00,000 -> max_budget 100000
+    intent2 = _fallback_extract_intent("laptop under ₹1,00,000")
+    assert intent2.max_budget == Decimal("100000")
     assert intent2.currency == "INR"
-    assert "phone" in intent2.keywords
+    assert "laptop" in intent2.keywords
     assert "000" not in intent2.keywords
 
-    # ₹1,00,000 -> max_budget 100000
-    intent3 = _fallback_extract_intent("laptop under ₹1,00,000")
-    assert intent3.max_budget == Decimal("100000")
+    # ₹12,50,000 -> max_budget 1250000
+    intent3 = _fallback_extract_intent("car under ₹12,50,000")
+    assert intent3.max_budget == Decimal("1250000")
     assert intent3.currency == "INR"
+    assert "car" in intent3.keywords
+
+    # Rs. 70,000
+    intent4 = _fallback_extract_intent("laptop under Rs. 70,000")
+    assert intent4.max_budget == Decimal("70000")
+    assert intent4.currency == "INR"
+
+    # Rs 1,00,000
+    intent5 = _fallback_extract_intent("laptop under Rs 1,00,000")
+    assert intent5.max_budget == Decimal("100000")
+    assert intent5.currency == "INR"
+
+    # 12,50,000 rupees
+    intent6 = _fallback_extract_intent("luxury watch under 12,50,000 rupees")
+    assert intent6.max_budget == Decimal("1250000")
+    assert intent6.currency == "INR"
+    assert "watch" in intent6.keywords
+
+    # $1,000 -> max_budget 1000, currency USD
+    intent7 = _fallback_extract_intent("laptop under $1,000")
+    assert intent7.max_budget == Decimal("1000")
+    assert intent7.currency == "USD"
 
     # between $1,200 and $3,500
-    intent4 = _fallback_extract_intent("camera between $1,200 and $3,500")
-    assert intent4.min_budget == Decimal("1200")
-    assert intent4.max_budget == Decimal("3500")
-    assert intent4.currency == "USD"
+    intent8 = _fallback_extract_intent("camera between $1,200 and $3,500")
+    assert intent8.min_budget == Decimal("1200")
+    assert intent8.max_budget == Decimal("3500")
+    assert intent8.currency == "USD"
 
 
 def test_inr_catalogue_configuration(isolated_db: Session):
@@ -1038,7 +1109,7 @@ def test_inr_catalogue_configuration(isolated_db: Session):
 def test_usd_catalogue_rejects_inr_without_conversion(isolated_db: Session):
     agent_usd = ShoppingAgent(catalogue_currency="USD")
 
-    # Grouped number $1,000 succeeds
+    # Grouped number $1,000 succeeds on USD deployment
     resp_grouped = agent_usd.search(ShoppingSearchRequest(query="headphones under $1,000"), isolated_db)
     assert resp_grouped.status == "success"
     assert resp_grouped.currency == "USD"
@@ -1056,16 +1127,89 @@ def test_usd_catalogue_rejects_inr_without_conversion(isolated_db: Session):
 
 def test_api_shopping_search_with_configured_currency(api_client):
     client, _ = api_client
-    # Switch app state settings catalogue_currency to INR
+    # Seed audio product in client database
+    session = client.app.state.db_session_factory()
+    try:
+        cat = ProductCategory(id=uuid4(), name="Audio", slug="audio")
+        prod = Product(
+            id=uuid4(),
+            sku="EARBUD-01",
+            name="Wireless Earbuds",
+            description="Clear audio earbuds.",
+            price=Decimal("49.99"),
+            is_active=True,
+            categories=[cat],
+        )
+        inv = Inventory(product_id=prod.id, available_quantity=10)
+        session.add_all([cat, prod, inv])
+        session.commit()
+    finally:
+        session.close()
+
+    # Verify default is INR
+    response = client.post(
+        "/api/v1/shopping/search",
+        json={"category": "audio", "max_price": 100.0, "currency": "INR"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["currency"] == "INR"
+    assert data["products"][0]["currency"] == "INR"
+
+    # Switch app state settings catalogue_currency to USD for alternative deployment test
     original_currency = client.app.state.settings.catalogue_currency
     try:
-        client.app.state.settings.catalogue_currency = "INR"
-        response = client.post(
+        client.app.state.settings.catalogue_currency = "USD"
+        response_usd = client.post(
             "/api/v1/shopping/search",
-            json={"category": "audio", "max_price": 100.0, "currency": "INR"},
+            json={"category": "audio", "max_price": 100.0, "currency": "USD"},
         )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["currency"] == "INR"
+        assert response_usd.status_code == 200
+        data_usd = response_usd.json()
+        assert data_usd["status"] == "success"
+        assert data_usd["currency"] == "USD"
+        assert data_usd["products"][0]["currency"] == "USD"
     finally:
         client.app.state.settings.catalogue_currency = original_currency
+
+
+def test_api_supervisor_chat_uses_configured_inr(api_client):
+    client, fake_client = api_client
+    # Seed audio product in client database
+    session = client.app.state.db_session_factory()
+    try:
+        cat = ProductCategory(id=uuid4(), name="Earbuds", slug="earbuds")
+        prod = Product(
+            id=uuid4(),
+            sku="EARBUD-02",
+            name="Earbuds Pro",
+            description="Pro noise cancelling earbuds.",
+            price=Decimal("89.99"),
+            is_active=True,
+            categories=[cat],
+        )
+        inv = Inventory(product_id=prod.id, available_quantity=5)
+        session.add_all([cat, prod, inv])
+        session.commit()
+    finally:
+        session.close()
+
+    response = client.post(
+        "/api/v1/shopping/chat",
+        json={"question": "Find earbuds under ₹100"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["destination"] == "shopping_agent"
+    assert data["shopping_response"] is not None
+    assert data["shopping_response"]["currency"] == "INR"
+    assert data["shopping_response"]["status"] == "success"
+    assert len(data["shopping_response"]["products"]) >= 1
+    assert data["shopping_response"]["products"][0]["currency"] == "INR"
+
+
+def test_agent_entry_point_uses_inr_symbol():
+    from backend.app.core.constants import get_currency_symbol
+    assert get_currency_symbol("INR") == "₹"
+    assert get_currency_symbol("USD") == "$"

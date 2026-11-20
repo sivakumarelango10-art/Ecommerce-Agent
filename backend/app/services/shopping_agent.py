@@ -42,7 +42,7 @@ Analyze the user's shopping request and output ONLY a valid JSON object with the
   "category": null or "string (e.g. electronics, audio, clothing)",
   "min_budget": null or number,
   "max_budget": null or number,
-  "currency": null or "string (e.g. USD)",
+  "currency": null or "string (e.g. INR)",
   "brand": null or "string",
   "required_features": ["list", "of", "features"],
   "use_case": null or "string",
@@ -57,7 +57,7 @@ Analyze the user's shopping request and output ONLY a valid JSON object with the
 Rules:
 1. Do not invent details. If a preference is not stated or implied, leave it as null or empty list.
 2. If the user message is too vague to search (e.g. "I want to buy something", "help me shop", "show me products"), set "is_ambiguous_or_insufficient": true and provide a helpful "clarification_message".
-3. Extract price limits accurately (e.g., "under $100" -> max_budget: 100; "between 20 and 50" -> min_budget: 20, max_budget: 50).
+3. Extract price limits accurately (e.g., "under ₹10,000" -> max_budget: 10000; "between 2000 and 5000" -> min_budget: 2000, max_budget: 5000).
 4. Output ONLY the raw JSON object, without markdown code blocks, explanation, or commentary.
 """
 
@@ -69,7 +69,7 @@ _SEARCH_STOP_WORDS = {
     "some", "any", "something", "anything", "please", "item", "items", "product",
     "products", "good", "best", "recommend", "under", "below", "above", "between",
     "usd", "inr", "eur", "gbp", "cad", "aud", "jpy", "rupee", "rupees", "dollar",
-    "dollars", "euro", "euros", "pound", "pounds",
+    "dollars", "euro", "euros", "pound", "pounds", "rs",
 }
 
 
@@ -82,6 +82,7 @@ def _clean_json_text(text: str) -> str:
 
 
 _GROUPED_NUMBER_PATTERN = r"(?:\d{1,3}(?:,\d{2,3})+|\d+)(?:\.\d{1,2})?"
+_CURRENCY_PREFIX_PATTERN = r"(?:[\$€£₹¥]|C\$|A\$|rs\.?|\b(?:usd|inr|eur|gbp|cad|aud|jpy|rupees?|dollars?|euros?|pounds?)\b)\s*"
 
 
 def _fallback_extract_intent(query: str) -> ShoppingIntent:
@@ -93,7 +94,7 @@ def _fallback_extract_intent(query: str) -> ShoppingIntent:
     # Currency extraction
     detected_currency: str | None = None
     curr_match = re.search(
-        r"\b(USD|INR|EUR|GBP|CAD|AUD|JPY|rupees?|euros?|pounds?|dollars?|rs\.?)\b|[€£₹¥$]|C\$|A\$",
+        r"(?:\b(?:USD|INR|EUR|GBP|CAD|AUD|JPY|rupees?|euros?|pounds?|dollars?)\b|rs\.?|[€£₹¥$]|C\$|A\$)",
         clean_query,
         re.IGNORECASE,
     )
@@ -116,11 +117,11 @@ def _fallback_extract_intent(query: str) -> ShoppingIntent:
         else:
             detected_currency = matched_curr
 
-    # Heuristic price extraction supporting grouped digits ($1,000, ₹70,000, 1,00,000)
+    # Heuristic price extraction supporting grouped digits (₹70,000, ₹1,00,000, ₹12,50,000, $1,000)
     max_budget: Decimal | None = None
     min_budget: Decimal | None = None
     under_match = re.search(
-        rf"(?:under|below|less than|up to)\s*(?:[\$€£₹¥]|C\$|A\$|\b(?:usd|inr|eur|gbp|cad|aud|jpy|rupees?|dollars?|euros?|pounds?|rs\.?)\b\s*)?({_GROUPED_NUMBER_PATTERN})",
+        rf"(?:under|below|less than|up to)\s*(?:{_CURRENCY_PREFIX_PATTERN})?({_GROUPED_NUMBER_PATTERN})",
         clean_query,
         re.IGNORECASE,
     )
@@ -132,7 +133,7 @@ def _fallback_extract_intent(query: str) -> ShoppingIntent:
             pass
 
     between_match = re.search(
-        rf"(?:between|from)\s*(?:[\$€£₹¥]|C\$|A\$|\b(?:usd|inr|eur|gbp|cad|aud|jpy|rupees?|dollars?|euros?|pounds?|rs\.?)\b\s*)?({_GROUPED_NUMBER_PATTERN})\s*(?:and|to)\s*(?:[\$€£₹¥]|C\$|A\$|\b(?:usd|inr|eur|gbp|cad|aud|jpy|rupees?|dollars?|euros?|pounds?|rs\.?)\b\s*)?({_GROUPED_NUMBER_PATTERN})",
+        rf"(?:between|from)\s*(?:{_CURRENCY_PREFIX_PATTERN})?({_GROUPED_NUMBER_PATTERN})\s*(?:and|to)\s*(?:{_CURRENCY_PREFIX_PATTERN})?({_GROUPED_NUMBER_PATTERN})",
         clean_query,
         re.IGNORECASE,
     )
@@ -147,7 +148,7 @@ def _fallback_extract_intent(query: str) -> ShoppingIntent:
 
     if max_budget is None and min_budget is None:
         budget_match = re.search(
-            rf"(?:budget(?: of)?|for|max(?:imum)?)\s*(?:[\$€£₹¥]|C\$|A\$|\b(?:usd|inr|eur|gbp|cad|aud|jpy|rupees?|dollars?|euros?|pounds?|rs\.?)\b\s*)?({_GROUPED_NUMBER_PATTERN})",
+            rf"(?:budget(?: of)?|for|max(?:imum)?)\s*(?:{_CURRENCY_PREFIX_PATTERN})?({_GROUPED_NUMBER_PATTERN})",
             clean_query,
             re.IGNORECASE,
         )
@@ -159,8 +160,9 @@ def _fallback_extract_intent(query: str) -> ShoppingIntent:
 
     if max_budget is None and min_budget is None:
         symbol_price_match = re.search(
-            rf"(?:[\$€£₹¥]|C\$|A\$)\s*({_GROUPED_NUMBER_PATTERN})",
+            rf"(?:[\$€£₹¥]|C\$|A\$|rs\.?)\s*({_GROUPED_NUMBER_PATTERN})",
             clean_query,
+            re.IGNORECASE,
         )
         if symbol_price_match:
             try:
@@ -287,25 +289,10 @@ class ShoppingAgent:
         if request.query and request.query.strip():
             intent = self.extract_intent(request.query)
 
-            # Check for ambiguity
-            if intent.is_ambiguous_or_insufficient:
-                return ShoppingSearchResponse(
-                    query=request.query,
-                    intent=intent,
-                    currency=self._catalogue_currency,
-                    status="insufficient_information",
-                    message=(
-                        intent.clarification_message
-                        or "Your request is too broad. Please provide a category, product name, or budget."
-                    ),
-                    products=[],
-                    total_count=0,
-                    limit=request.limit,
-                    offset=request.offset,
-                )
-
         # Currency validation:
         # Determine requested currency (from explicit request or extracted intent)
+        # Check this BEFORE ambiguity check so that ambiguous queries specifying mismatched
+        # currencies (e.g. "buy something in dollars") return unsupported_currency, not insufficient_information.
         requested_currency = request.currency or (intent.currency if intent else None)
         if requested_currency:
             norm_curr = requested_currency.strip().upper()
@@ -333,6 +320,24 @@ class ShoppingAgent:
                     limit=request.limit,
                     offset=request.offset,
                 )
+
+        # Ambiguity check:
+        # Only after currency validation passes, check if the query lacks sufficient search criteria
+        if intent and intent.is_ambiguous_or_insufficient:
+            return ShoppingSearchResponse(
+                query=request.query,
+                intent=intent,
+                currency=self._catalogue_currency,
+                status="insufficient_information",
+                message=(
+                    intent.clarification_message
+                    or "Your request is too broad. Please provide a category, product name, or budget."
+                ),
+                products=[],
+                total_count=0,
+                limit=request.limit,
+                offset=request.offset,
+            )
 
         # Merge intent with explicit overrides from request
         category = request.category or (intent.category if intent else None)
