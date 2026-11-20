@@ -9,6 +9,10 @@ from google.genai import errors, types
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from backend.app.core.constants import (
+    CATALOGUE_CURRENCY,
+    POLICY_UNAVAILABLE_MESSAGE,
+)
 from backend.app.db.base import Base
 from backend.app.db.models import Inventory, Product, ProductCategory, User
 from backend.app.schemas.shopping import (
@@ -450,8 +454,8 @@ def test_supervisor_process_shopping_vs_general(isolated_db: Session):
     assert resp.shopping_response is not None
     assert resp.shopping_response.status == "success"
 
-    # Process general request
-    resp_gen = supervisor.process("What is your return policy?", isolated_db)
+    # Process general advice request
+    resp_gen = supervisor.process("What should I compare when choosing headphones?", isolated_db)
     assert resp_gen.destination == "general_assistant"
     assert resp_gen.general_answer == "General advice on products."
 
@@ -594,6 +598,78 @@ def test_api_shopping_search_gemini_error_returns_502(api_client):
     assert response.json()["detail"] == "The Gemini service could not complete the request."
 
 
+def test_api_shopping_search_currency_mismatch_returns_unsupported(api_client):
+    client, _ = api_client
+
+    response = client.post(
+        "/api/v1/shopping/search",
+        json={"currency": "INR", "max_price": 5000.0},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "unsupported_currency"
+    assert data["currency"] == "USD"
+    assert data["products"] == []
+    assert data["total_count"] == 0
+    assert "INR" in data["message"]
+    assert "USD" in data["message"]
+
+
+def test_api_shopping_search_min_quantity_support(api_client):
+    client, _ = api_client
+
+    # Seed product with quantity 8
+    session = client.app.state.db_session_factory()
+    try:
+        cat = ProductCategory(id=uuid4(), name="Laptops", slug="laptops")
+        prod = Product(
+            id=uuid4(),
+            sku="LAPTOP-01",
+            name="Pro Laptop 15",
+            description="High performance developer laptop.",
+            price=Decimal("1299.00"),
+            is_active=True,
+            categories=[cat],
+        )
+        inv = Inventory(product_id=prod.id, available_quantity=8)
+        session.add_all([cat, prod, inv])
+        session.commit()
+    finally:
+        session.close()
+
+    # min_quantity=5 -> matches (qty is 8)
+    resp1 = client.post(
+        "/api/v1/shopping/search",
+        json={"category": "laptops", "min_quantity": 5},
+    )
+    assert resp1.status_code == 200
+    assert resp1.json()["total_count"] == 1
+
+    # min_quantity=10 -> 0 matches (qty is 8)
+    resp2 = client.post(
+        "/api/v1/shopping/search",
+        json={"category": "laptops", "min_quantity": 10},
+    )
+    assert resp2.status_code == 200
+    assert resp2.json()["status"] == "no_results"
+    assert resp2.json()["total_count"] == 0
+
+
+def test_api_supervisor_chat_missing_policy_information(api_client):
+    client, _ = api_client
+
+    response = client.post(
+        "/api/v1/shopping/chat",
+        json={"question": "What is your return policy?"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["destination"] == "general_assistant"
+    assert data["general_answer"] == POLICY_UNAVAILABLE_MESSAGE
+    assert "not currently available" in data["general_answer"]
+
+
+
 # --- 12. SQL Injection Safety ---
 
 def test_sql_injection_safety(isolated_db: Session):
@@ -616,3 +692,254 @@ def test_sql_injection_safety(isolated_db: Session):
     # Verify tables still exist
     all_products, total = search_catalogue_products(isolated_db, in_stock_only=False)
     assert total > 0
+
+
+# --- 13. Currency Handling Tests ---
+
+def test_currency_mismatch_returns_unsupported_currency_response(isolated_db: Session):
+    agent = ShoppingAgent()
+
+    # Mismatch via explicit request currency
+    req1 = ShoppingSearchRequest(category="audio", max_price=Decimal("5000"), currency="INR")
+    resp1 = agent.search(req1, isolated_db)
+    assert resp1.status == "unsupported_currency"
+    assert resp1.total_count == 0
+    assert resp1.products == []
+    assert "INR" in resp1.message
+    assert CATALOGUE_CURRENCY in resp1.message
+    assert "not supported" in resp1.message
+
+    # Mismatch via natural language query with EUR
+    gemini_eur = MockGeminiText(json.dumps({
+        "keywords": ["headphones"],
+        "max_budget": 50.0,
+        "currency": "EUR",
+        "is_shopping_intent": True,
+        "is_ambiguous_or_insufficient": False,
+    }))
+    agent_eur = ShoppingAgent(gemini_eur)
+    resp2 = agent_eur.search(ShoppingSearchRequest(query="headphones under 50 euros"), isolated_db)
+    assert resp2.status == "unsupported_currency"
+    assert resp2.total_count == 0
+    assert "EUR" in resp2.message
+
+    # Mismatch via fallback extraction of rupees
+    agent_fallback = ShoppingAgent()
+    resp3 = agent_fallback.search(ShoppingSearchRequest(query="headphones under 3000 rupees"), isolated_db)
+    assert resp3.status == "unsupported_currency"
+    assert "INR" in resp3.message
+
+
+def test_supported_currency_searches_catalogue(isolated_db: Session):
+    agent = ShoppingAgent()
+
+    # Supported currency "USD"
+    req_usd = ShoppingSearchRequest(category="audio", max_price=Decimal("100.00"), currency="USD")
+    resp_usd = agent.search(req_usd, isolated_db)
+    assert resp_usd.status == "success"
+    assert resp_usd.currency == "USD"
+    assert len(resp_usd.products) == 1
+    assert resp_usd.products[0].sku == "ANK-SND-01"
+
+    # Supported currency "$"
+    req_symbol = ShoppingSearchRequest(category="audio", max_price=Decimal("100.00"), currency="$")
+    resp_symbol = agent.search(req_symbol, isolated_db)
+    assert resp_symbol.status == "success"
+    assert resp_symbol.currency == "USD"
+    assert len(resp_symbol.products) == 1
+
+
+# --- 14. Stock Preference Precedence Tests ---
+
+def test_explicit_stock_preference_overrides_gemini(isolated_db: Session):
+    # Gemini extracted in_stock_only=True, but request explicitly has in_stock_only=False
+    gemini = MockGeminiText(json.dumps({
+        "keywords": ["running", "shoes"],
+        "category": "footwear",
+        "in_stock_only": True,
+        "is_shopping_intent": True,
+        "is_ambiguous_or_insufficient": False,
+    }))
+    agent = ShoppingAgent(gemini)
+
+    req = ShoppingSearchRequest(query="Find running shoes", in_stock_only=False)
+    resp = agent.search(req, isolated_db)
+
+    # Out-of-stock Adidas ($180, qty=0) must be included because explicit request wins
+    assert resp.status == "success"
+    assert resp.total_count == 2
+    skus = {p.sku for p in resp.products}
+    assert "ADI-UB-01" in skus
+    assert "NIKE-AZ-01" in skus
+
+
+def test_gemini_stock_preference_used_when_request_absent(isolated_db: Session):
+    # Request has in_stock_only=None, Gemini extracted in_stock_only=False
+    gemini = MockGeminiText(json.dumps({
+        "keywords": ["running", "shoes"],
+        "category": "footwear",
+        "in_stock_only": False,
+        "is_shopping_intent": True,
+        "is_ambiguous_or_insufficient": False,
+    }))
+    agent = ShoppingAgent(gemini)
+
+    req = ShoppingSearchRequest(query="Find running shoes including out of stock")
+    assert req.in_stock_only is None
+
+    resp = agent.search(req, isolated_db)
+    # Out-of-stock Adidas included because extracted preference is False
+    assert resp.status == "success"
+    assert resp.total_count == 2
+    skus = {p.sku for p in resp.products}
+    assert "ADI-UB-01" in skus
+
+
+def test_default_stock_preference_when_neither_supplied(isolated_db: Session):
+    # Request has in_stock_only=None, Gemini has in_stock_only=None
+    gemini = MockGeminiText(json.dumps({
+        "keywords": ["running", "shoes"],
+        "category": "footwear",
+        "in_stock_only": None,
+        "is_shopping_intent": True,
+        "is_ambiguous_or_insufficient": False,
+    }))
+    agent = ShoppingAgent(gemini)
+
+    req = ShoppingSearchRequest(query="running shoes", category="footwear")
+    assert req.in_stock_only is None
+
+    resp = agent.search(req, isolated_db)
+    # Default is True, so out-of-stock Adidas is excluded
+    assert resp.status == "success"
+    assert resp.total_count == 1
+    assert resp.products[0].sku == "NIKE-AZ-01"
+
+
+# --- 15. Sorting Preference Precedence Tests ---
+
+def test_explicit_sorting_overrides_gemini(isolated_db: Session):
+    # Gemini extracted sort_by=price_desc, but request explicitly specifies price_asc
+    gemini = MockGeminiText(json.dumps({
+        "keywords": [],
+        "category": "footwear",
+        "sort_by": "price_desc",
+        "is_shopping_intent": True,
+        "is_ambiguous_or_insufficient": False,
+    }))
+    agent = ShoppingAgent(gemini)
+
+    req = ShoppingSearchRequest(
+        query="running shoes",
+        category="footwear",
+        in_stock_only=False,
+        sort_by=SortOrder.PRICE_ASC,
+    )
+    resp = agent.search(req, isolated_db)
+
+    # Explicit PRICE_ASC wins: Nike ($120) before Adidas ($180)
+    assert resp.status == "success"
+    assert resp.total_count == 2
+    assert resp.products[0].sku == "NIKE-AZ-01"
+    assert resp.products[1].sku == "ADI-UB-01"
+
+
+def test_gemini_sorting_used_when_request_absent(isolated_db: Session):
+    # Request has sort_by=None, Gemini extracted sort_by=price_desc
+    gemini = MockGeminiText(json.dumps({
+        "keywords": [],
+        "category": "footwear",
+        "sort_by": "price_desc",
+        "is_shopping_intent": True,
+        "is_ambiguous_or_insufficient": False,
+    }))
+    agent = ShoppingAgent(gemini)
+
+    req = ShoppingSearchRequest(
+        query="running shoes expensive first",
+        category="footwear",
+        in_stock_only=False,
+    )
+    assert req.sort_by is None
+
+    resp = agent.search(req, isolated_db)
+    # Extracted PRICE_DESC wins: Adidas ($180) before Nike ($120)
+    assert resp.status == "success"
+    assert resp.total_count == 2
+    assert resp.products[0].sku == "ADI-UB-01"
+    assert resp.products[1].sku == "NIKE-AZ-01"
+
+
+def test_default_sorting_when_neither_supplied(isolated_db: Session):
+    # Neither supplied -> defaults to price ascending
+    gemini = MockGeminiText(json.dumps({
+        "keywords": [],
+        "category": "footwear",
+        "sort_by": None,
+        "is_shopping_intent": True,
+        "is_ambiguous_or_insufficient": False,
+    }))
+    agent = ShoppingAgent(gemini)
+
+    req = ShoppingSearchRequest(query="running shoes", category="footwear", in_stock_only=False)
+    assert req.sort_by is None
+
+    resp = agent.search(req, isolated_db)
+    # Default PRICE_ASC: Nike ($120) before Adidas ($180)
+    assert resp.products[0].sku == "NIKE-AZ-01"
+    assert resp.products[1].sku == "ADI-UB-01"
+
+
+# --- 16. Minimum Quantity Tests (1, 5, 15) ---
+
+def test_minimum_inventory_quantity_1_5_15(isolated_db: Session):
+    agent = ShoppingAgent()
+
+    # Active in stock items:
+    # Anker: 25 available
+    # Sony: 10 available
+    # Nike: 5 available
+    # Adidas: 0 available
+
+    # min_quantity=1 -> Sony, Anker, Nike (total 3)
+    resp1 = agent.search(ShoppingSearchRequest(min_quantity=1), isolated_db)
+    assert resp1.total_count == 3
+    assert {p.sku for p in resp1.products} == {"SONY-WH1000XM5", "ANK-SND-01", "NIKE-AZ-01"}
+
+    # min_quantity=5 -> Sony (10), Anker (25), Nike (5) (total 3)
+    resp5 = agent.search(ShoppingSearchRequest(min_quantity=5), isolated_db)
+    assert resp5.total_count == 3
+    assert {p.sku for p in resp5.products} == {"SONY-WH1000XM5", "ANK-SND-01", "NIKE-AZ-01"}
+
+    # min_quantity=15 -> only Anker (25) (total 1; Sony and Nike excluded)
+    resp15 = agent.search(ShoppingSearchRequest(min_quantity=15), isolated_db)
+    assert resp15.total_count == 1
+    assert resp15.products[0].sku == "ANK-SND-01"
+    assert resp15.products[0].available_quantity == 25
+
+
+# --- 17. Missing Policy Information Tests ---
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "What is your return policy?",
+        "Can I get a refund on my purchase?",
+        "How many days do I have to return an item?",
+        "What is your shipping policy?",
+        "Do you offer a warranty on products?",
+    ],
+)
+def test_missing_policy_information_returns_unavailable_message(isolated_db: Session, question: str):
+    gemini = MockGeminiText("Invented 30-day return policy with free shipping.")
+    supervisor = SupervisorAgent(gemini)
+
+    resp = supervisor.process(question, isolated_db)
+
+    assert resp.destination == "general_assistant"
+    assert resp.general_answer is not None
+    # Must return verified unavailable message, NOT invented policy periods
+    assert resp.general_answer == POLICY_UNAVAILABLE_MESSAGE
+    assert "not currently available" in resp.general_answer
+    assert "30-day" not in resp.general_answer
+    assert "free shipping" not in resp.general_answer

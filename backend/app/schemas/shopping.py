@@ -5,6 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from backend.app.core.constants import CATALOGUE_CURRENCY
 from backend.app.schemas.catalog import ProductCategoryResponse
 
 
@@ -57,12 +58,12 @@ class ShoppingIntent(BaseModel):
         default=None,
         description="Intended use case, e.g. gaming, running, office.",
     )
-    in_stock_only: bool = Field(
-        default=True,
+    in_stock_only: bool | None = Field(
+        default=None,
         description="Whether only in-stock items should be matched.",
     )
-    min_quantity: int = Field(
-        default=1,
+    min_quantity: int | None = Field(
+        default=None,
         ge=1,
         description="Minimum inventory units required.",
     )
@@ -92,9 +93,11 @@ class ShoppingSearchRequest(BaseModel):
     keywords: list[str] = Field(default_factory=list)
     min_price: Decimal | None = Field(default=None, ge=0)
     max_price: Decimal | None = Field(default=None, ge=0)
+    currency: Annotated[str | None, Field(default=None, max_length=10)] = None
     brand: Annotated[str | None, Field(default=None, max_length=100)] = None
-    in_stock_only: bool = True
-    sort_by: SortOrder = SortOrder.PRICE_ASC
+    in_stock_only: bool | None = None
+    min_quantity: Annotated[int | None, Field(default=None, ge=1)] = None
+    sort_by: SortOrder | None = None
     limit: Annotated[int, Field(default=20, ge=1, le=100)] = 20
     offset: Annotated[int, Field(default=0, ge=0)] = 0
 
@@ -117,6 +120,7 @@ class ShoppingProductItem(BaseModel):
     name: str
     description: str | None
     price: Decimal = Field(max_digits=12, decimal_places=2)
+    currency: str = CATALOGUE_CURRENCY
     categories: list[ProductCategoryResponse]
     in_stock: bool
     available_quantity: int = Field(ge=0)
@@ -126,7 +130,10 @@ class ShoppingProductItem(BaseModel):
 class ShoppingSearchResponse(BaseModel):
     query: str | None = None
     intent: ShoppingIntent | None = None
-    status: Literal["success", "no_results", "insufficient_information"] = "success"
+    currency: str = CATALOGUE_CURRENCY
+    status: Literal[
+        "success", "no_results", "insufficient_information", "unsupported_currency"
+    ] = "success"
     message: str
     products: list[ShoppingProductItem] = Field(default_factory=list)
     total_count: int = Field(ge=0)

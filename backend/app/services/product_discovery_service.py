@@ -56,7 +56,7 @@ def search_catalogue_products(
         base_query = base_query.where(Product.price <= max_price)
 
     # Inventory / stock filter
-    if in_stock_only:
+    if in_stock_only or min_quantity > 1:
         base_query = base_query.where(
             func.coalesce(Inventory.available_quantity, 0) >= max(1, min_quantity)
         )

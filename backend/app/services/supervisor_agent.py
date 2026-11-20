@@ -5,6 +5,7 @@ from typing import Literal
 from google.genai import types
 from sqlalchemy.orm import Session
 
+from backend.app.core.constants import POLICY_UNAVAILABLE_MESSAGE
 from backend.app.schemas.shopping import (
     ShoppingSearchRequest,
     SupervisorRouteResponse,
@@ -27,6 +28,16 @@ _GENERAL_PATTERNS = [
     re.compile(r"\b(?:what should i compare|how does|what is your policy|explain the difference)\b", re.IGNORECASE),
     re.compile(r"\b(?:return policy|shipping policy|terms of service|warranty policy)\b", re.IGNORECASE),
 ]
+
+_POLICY_PATTERNS = [
+    re.compile(r"\b(?:return|refund|shipping|delivery|warranty|exchange)\s+polic(?:y|ies)\b", re.IGNORECASE),
+    re.compile(r"\b(?:return\s+window|days\s+to\s+return|money\s+back\s+guarantee)\b", re.IGNORECASE),
+    re.compile(r"\b(?:how\s+(?:long|many\s+days)\s+do\s+i\s+have\s+to\s+return)\b", re.IGNORECASE),
+    re.compile(r"\b(?:do\s+you\s+(?:offer|have)\s+(?:a\s+)?warranty)\b", re.IGNORECASE),
+    re.compile(r"\b(?:what\s+is\s+the\s+warranty|how\s+does\s+shipping\s+work)\b", re.IGNORECASE),
+    re.compile(r"\b(?:can\s+i\s+get\s+a\s+refund|how\s+do\s+returns\s+work)\b", re.IGNORECASE),
+]
+
 
 _ROUTING_TOOL = types.Tool(
     function_declarations=[
@@ -89,7 +100,11 @@ class SupervisorAgent:
         if not clean:
             return "general_assistant", 1.0, "Empty query routed to general assistant."
 
-        # Check explicit general patterns first
+        # Check explicit policy and general patterns first
+        for pat in _POLICY_PATTERNS:
+            if pat.search(clean):
+                return "general_assistant", 1.0, f"Deterministic policy match: {pat.pattern}"
+
         for pat in _GENERAL_PATTERNS:
             if pat.search(clean):
                 return "general_assistant", 1.0, f"Deterministic pattern match: {pat.pattern}"
@@ -146,6 +161,17 @@ class SupervisorAgent:
                 reason=reason,
                 shopping_response=shopping_resp,
                 general_answer=None,
+            )
+
+        # Policy questions: return verified message if no policy data is available
+        clean_msg = message.strip()
+        if any(pat.search(clean_msg) for pat in _POLICY_PATTERNS):
+            return SupervisorRouteResponse(
+                destination="general_assistant",
+                confidence=1.0,
+                reason="Policy question intercepted; no verified store policies currently configured.",
+                shopping_response=None,
+                general_answer=POLICY_UNAVAILABLE_MESSAGE,
             )
 
         answer = self._gemini.answer(message)

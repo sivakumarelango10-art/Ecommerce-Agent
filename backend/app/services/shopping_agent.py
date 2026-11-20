@@ -6,6 +6,10 @@ from typing import Protocol
 
 from sqlalchemy.orm import Session
 
+from backend.app.core.constants import (
+    CATALOGUE_CURRENCY,
+    SUPPORTED_CURRENCIES,
+)
 from backend.app.db.models import Product
 from backend.app.schemas.catalog import ProductCategoryResponse
 from backend.app.schemas.shopping import (
@@ -63,6 +67,8 @@ _SEARCH_STOP_WORDS = {
     "look", "show", "get", "give", "me", "i", "we", "you", "he", "she", "it",
     "some", "any", "something", "anything", "please", "item", "items", "product",
     "products", "good", "best", "recommend", "under", "below", "above", "between",
+    "usd", "inr", "eur", "gbp", "cad", "aud", "jpy", "rupee", "rupees", "dollar",
+    "dollars", "euro", "euros", "pound", "pounds",
 }
 
 
@@ -80,10 +86,34 @@ def _fallback_extract_intent(query: str) -> ShoppingIntent:
     raw_words = [w for w in re.findall(r"\b[A-Za-z0-9_-]+\b", clean_query) if len(w) > 2]
     words = [w for w in raw_words if w.lower() not in _SEARCH_STOP_WORDS]
 
+    # Currency extraction
+    detected_currency: str | None = None
+    curr_match = re.search(
+        r"\b(USD|INR|EUR|GBP|CAD|AUD|JPY|rupees?|euros?|pounds?|dollars?)\b|[€£₹¥$]",
+        clean_query,
+        re.IGNORECASE,
+    )
+    if curr_match:
+        matched_curr = curr_match.group(0).upper()
+        if matched_curr in {"$", "DOLLAR", "DOLLARS"}:
+            detected_currency = "USD"
+        elif matched_curr in {"₹", "RUPEE", "RUPEES"}:
+            detected_currency = "INR"
+        elif matched_curr in {"€", "EURO", "EUROS"}:
+            detected_currency = "EUR"
+        elif matched_curr in {"£", "POUND", "POUNDS"}:
+            detected_currency = "GBP"
+        else:
+            detected_currency = matched_curr
+
     # Heuristic price extraction
     max_budget: Decimal | None = None
     min_budget: Decimal | None = None
-    under_match = re.search(r"(?:under|below|less than|up to)\s*\$?(\d+(?:\.\d{1,2})?)", clean_query, re.IGNORECASE)
+    under_match = re.search(
+        r"(?:under|below|less than|up to)\s*(?:[\$€£₹¥]|\b(?:usd|inr|eur|gbp|rupees?|dollars?)\b\s*)?(\d+(?:\.\d{1,2})?)",
+        clean_query,
+        re.IGNORECASE,
+    )
     if under_match:
         try:
             max_budget = Decimal(under_match.group(1))
@@ -91,7 +121,7 @@ def _fallback_extract_intent(query: str) -> ShoppingIntent:
             pass
 
     between_match = re.search(
-        r"(?:between|from)\s*\$?(\d+(?:\.\d{1,2})?)\s*(?:and|to)\s*\$?(\d+(?:\.\d{1,2})?)",
+        r"(?:between|from)\s*(?:[\$€£₹¥]|\b(?:usd|inr|eur|gbp|rupees?|dollars?)\b\s*)?(\d+(?:\.\d{1,2})?)\s*(?:and|to)\s*(?:[\$€£₹¥]|\b(?:usd|inr|eur|gbp|rupees?|dollars?)\b\s*)?(\d+(?:\.\d{1,2})?)",
         clean_query,
         re.IGNORECASE,
     )
@@ -110,6 +140,7 @@ def _fallback_extract_intent(query: str) -> ShoppingIntent:
         keywords=words,
         min_budget=min_budget,
         max_budget=max_budget,
+        currency=detected_currency,
         is_shopping_intent=True,
         is_ambiguous_or_insufficient=is_vague,
         clarification_message=(
@@ -209,10 +240,40 @@ class ShoppingAgent:
                 return ShoppingSearchResponse(
                     query=request.query,
                     intent=intent,
+                    currency=CATALOGUE_CURRENCY,
                     status="insufficient_information",
                     message=(
                         intent.clarification_message
                         or "Your request is too broad. Please provide a category, product name, or budget."
+                    ),
+                    products=[],
+                    total_count=0,
+                    limit=request.limit,
+                    offset=request.offset,
+                )
+
+        # Currency validation:
+        # Determine requested currency (from explicit request or extracted intent)
+        requested_currency = request.currency or (intent.currency if intent else None)
+        if requested_currency:
+            norm_curr = requested_currency.strip().upper()
+            if norm_curr not in SUPPORTED_CURRENCIES:
+                logger.info(
+                    "Unsupported currency requested",
+                    extra={
+                        "event": "unsupported_currency",
+                        "requested_currency": requested_currency,
+                    },
+                )
+                return ShoppingSearchResponse(
+                    query=request.query,
+                    intent=intent,
+                    currency=CATALOGUE_CURRENCY,
+                    status="unsupported_currency",
+                    message=(
+                        f"The catalogue prices and budgets are in {CATALOGUE_CURRENCY}. "
+                        f"Searches with budget in '{requested_currency}' are not supported, "
+                        f"and currency conversions are not performed. Please specify your budget in {CATALOGUE_CURRENCY}."
                     ),
                     products=[],
                     total_count=0,
@@ -242,10 +303,39 @@ class ShoppingAgent:
             keywords.append(intent.product_name)
 
         required_features = intent.required_features if intent else []
-        sort_by = request.sort_by or (intent.sort_by if intent else SortOrder.PRICE_ASC)
-        in_stock_only = request.in_stock_only if request.in_stock_only is not None else (
-            intent.in_stock_only if intent else True
-        )
+
+        # Sorting preference precedence:
+        # 1. Explicit request preference
+        # 2. Extracted intent preference
+        # 3. Default to price ascending
+        if request.sort_by is not None:
+            sort_by = request.sort_by
+        elif intent and intent.sort_by is not None:
+            sort_by = intent.sort_by
+        else:
+            sort_by = SortOrder.PRICE_ASC
+
+        # Stock preference precedence:
+        # 1. Explicit request preference
+        # 2. Extracted intent preference
+        # 3. Safe default (True)
+        if request.in_stock_only is not None:
+            in_stock_only = request.in_stock_only
+        elif intent and intent.in_stock_only is not None:
+            in_stock_only = intent.in_stock_only
+        else:
+            in_stock_only = True
+
+        # Minimum quantity precedence:
+        # 1. Explicit request preference
+        # 2. Extracted intent preference
+        # 3. Safe default (1)
+        if request.min_quantity is not None:
+            min_quantity = request.min_quantity
+        elif intent and intent.min_quantity is not None:
+            min_quantity = intent.min_quantity
+        else:
+            min_quantity = 1
 
         products, total_count = search_catalogue_products(
             session=session,
@@ -256,6 +346,7 @@ class ShoppingAgent:
             brand=brand,
             required_features=required_features,
             in_stock_only=in_stock_only,
+            min_quantity=min_quantity,
             sort_by=sort_by,
             limit=request.limit,
             offset=request.offset,
