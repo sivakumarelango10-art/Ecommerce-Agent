@@ -142,7 +142,7 @@ class SupervisorAgent:
         except Exception as exc:
             logger.warning(
                 "Gemini supervisor routing failed, falling back to deterministic heuristics",
-                extra={"event": "supervisor_route_fallback", "error": str(exc)},
+                extra={"event": "supervisor_route_fallback", "error_type": type(exc).__name__},
             )
             fallback_intent = _fallback_extract_intent(clean)
             if fallback_intent.is_shopping_intent and (

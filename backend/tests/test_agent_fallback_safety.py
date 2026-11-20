@@ -271,3 +271,31 @@ def test_supervisor_routing_failure_safely_handles_shopping(mock_sensitive_setti
     assert resp.shopping_response is not None
     assert resp.shopping_response.message == CATALOGUE_UNAVAILABLE_MESSAGE
     assert resp.general_answer is None
+
+
+def test_supervisor_route_exception_logging_does_not_leak_sensitive_exception_details(caplog):
+    """Verify that exceptions in SupervisorAgent.route() log only error_type and do not leak exception messages or fake secrets."""
+    import logging
+
+    fake_secret = "AIzaSyFakeSecretGeminiKey12345_DO_NOT_LOG"
+    sensitive_exception = RuntimeError(f"Connection to api.google.com failed with key {fake_secret}")
+
+    mock_gemini = MagicMock()
+    mock_gemini.generate.side_effect = sensitive_exception
+
+    supervisor = SupervisorAgent(mock_gemini, catalogue_currency="INR")
+
+    with caplog.at_level(logging.WARNING):
+        dest, conf, reason = supervisor.route("can someone help me choose something special")
+
+    assert fake_secret not in caplog.text
+    assert "Connection to api.google.com failed with key" not in caplog.text
+
+    found_fallback_log = False
+    for record in caplog.records:
+        if getattr(record, "event", None) == "supervisor_route_fallback":
+            found_fallback_log = True
+            assert getattr(record, "error_type", None) == "RuntimeError"
+            assert not hasattr(record, "error")
+
+    assert found_fallback_log is True
