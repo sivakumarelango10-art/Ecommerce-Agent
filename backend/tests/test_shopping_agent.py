@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from backend.app.core.config import Settings
 from backend.app.core.constants import (
     CATALOGUE_CURRENCY,
+    CATALOGUE_UNAVAILABLE_MESSAGE,
     POLICY_UNAVAILABLE_MESSAGE,
 )
 from backend.app.db.base import Base
@@ -1213,3 +1214,175 @@ def test_agent_entry_point_uses_inr_symbol():
     from backend.app.core.constants import get_currency_symbol
     assert get_currency_symbol("INR") == "₹"
     assert get_currency_symbol("USD") == "$"
+
+
+# --- 19. Search Request and Intent Input Bounding Tests ---
+
+def test_shopping_search_request_keyword_bounds():
+    # 1. More than 10 keywords -> raises ValidationError
+    with pytest.raises(ValidationError):
+        ShoppingSearchRequest(keywords=[f"term{i}" for i in range(11)])
+
+    # 2. Keyword longer than 80 characters -> raises ValidationError
+    with pytest.raises(ValidationError):
+        ShoppingSearchRequest(keywords=["a" * 81])
+
+    # 3. Blank or whitespace-only keyword -> raises ValidationError
+    with pytest.raises(ValidationError):
+        ShoppingSearchRequest(keywords=["valid", ""])
+    with pytest.raises(ValidationError):
+        ShoppingSearchRequest(keywords=["   "])
+
+    # 4. Valid limit case: exactly 10 keywords, each exactly 80 chars -> succeeds
+    ten_eighty_char_keywords = ["x" * 80 for _ in range(10)]
+    req = ShoppingSearchRequest(keywords=ten_eighty_char_keywords)
+    assert len(req.keywords) == 10
+    assert all(len(k) == 80 for k in req.keywords)
+
+
+def test_shopping_intent_bounds():
+    # More than 10 keywords and features -> gracefully bounded to 10 items of max 80 chars
+    intent = ShoppingIntent(
+        keywords=[f"term{i}" * 20 for i in range(15)],
+        required_features=["feature" for _ in range(15)],
+    )
+    assert len(intent.keywords) == 10
+    assert all(len(k) <= 80 for k in intent.keywords)
+    assert len(intent.required_features) == 10
+
+
+def test_api_shopping_search_keyword_validation(api_client):
+    client, _ = api_client
+
+    # > 10 keywords -> 422
+    resp1 = client.post(
+        "/api/v1/shopping/search",
+        json={"keywords": [f"item{i}" for i in range(11)]},
+    )
+    assert resp1.status_code == 422
+
+    # > 80 chars keyword -> 422
+    resp2 = client.post(
+        "/api/v1/shopping/search",
+        json={"keywords": ["a" * 81]},
+    )
+    assert resp2.status_code == 422
+
+    # Blank keyword -> 422
+    resp3 = client.post(
+        "/api/v1/shopping/search",
+        json={"keywords": ["valid", "   "]},
+    )
+    assert resp3.status_code == 422
+
+    # Valid 10 keywords -> 200
+    resp4 = client.post(
+        "/api/v1/shopping/search",
+        json={"keywords": [f"term{i}" for i in range(10)]},
+    )
+    assert resp4.status_code == 200
+
+
+# --- 20. Database Decoupling from /chat Endpoint Tests ---
+
+def test_api_supervisor_chat_general_question_without_database(api_client):
+    """General informational questions succeed even if the database is completely unavailable."""
+    client, fake_client = api_client
+    fake_client.models.outcome = "Here is advice on choosing between products."
+
+    # Simulate database engine/session_factory completely unavailable
+    orig_factory = client.app.state.db_session_factory
+    try:
+        client.app.state.db_session_factory = None
+
+        response = client.post(
+            "/api/v1/shopping/chat",
+            json={"question": "What should I compare when choosing headphones?"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["destination"] == "general_assistant"
+        assert data["general_answer"] == "Here is advice on choosing between products."
+        assert data["shopping_response"] is None
+    finally:
+        client.app.state.db_session_factory = orig_factory
+
+
+def test_api_supervisor_chat_policy_question_without_database(api_client):
+    """Policy questions return verified policy message without requiring a database session."""
+    client, _ = api_client
+
+    orig_factory = client.app.state.db_session_factory
+    try:
+        client.app.state.db_session_factory = None
+
+        response = client.post(
+            "/api/v1/shopping/chat",
+            json={"question": "What is your return policy?"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["destination"] == "general_assistant"
+        assert data["general_answer"] == POLICY_UNAVAILABLE_MESSAGE
+        assert data["shopping_response"] is None
+    finally:
+        client.app.state.db_session_factory = orig_factory
+
+
+def test_api_supervisor_chat_shopping_question_when_db_unavailable_returns_safe_message(api_client):
+    """Shopping queries return safe CATALOGUE_UNAVAILABLE_MESSAGE if db_session_factory is None."""
+    client, _ = api_client
+
+    orig_factory = client.app.state.db_session_factory
+    try:
+        client.app.state.db_session_factory = None
+
+        response = client.post(
+            "/api/v1/shopping/chat",
+            json={"question": "Find running shoes under ₹2000"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["destination"] == "shopping_agent"
+        assert data["shopping_response"] is not None
+        assert data["shopping_response"]["status"] == "no_results"
+        assert data["shopping_response"]["message"] == CATALOGUE_UNAVAILABLE_MESSAGE
+        assert data["shopping_response"]["products"] == []
+        assert data["general_answer"] is None
+    finally:
+        client.app.state.db_session_factory = orig_factory
+
+
+def test_api_supervisor_chat_shopping_question_db_error_returns_safe_message(api_client):
+    """Shopping queries return safe CATALOGUE_UNAVAILABLE_MESSAGE if DB raises SQLAlchemyError."""
+    from unittest.mock import MagicMock
+    from sqlalchemy.exc import OperationalError
+
+    client, _ = api_client
+
+    failing_session = MagicMock()
+    failing_session.__enter__.return_value = failing_session
+    failing_session.__exit__.return_value = False
+    failing_session.scalars.side_effect = OperationalError("connection refused", None, Exception("db down"))
+    failing_session.scalar.side_effect = OperationalError("connection refused", None, Exception("db down"))
+
+    failing_factory = MagicMock(return_value=failing_session)
+
+    orig_factory = client.app.state.db_session_factory
+    try:
+        client.app.state.db_session_factory = failing_factory
+
+        response = client.post(
+            "/api/v1/shopping/chat",
+            json={"question": "Find running shoes under ₹2000"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["destination"] == "shopping_agent"
+        assert data["shopping_response"] is not None
+        assert data["shopping_response"]["status"] == "no_results"
+        assert data["shopping_response"]["message"] == CATALOGUE_UNAVAILABLE_MESSAGE
+        assert data["shopping_response"]["products"] == []
+        assert data["general_answer"] is None
+    finally:
+        client.app.state.db_session_factory = orig_factory

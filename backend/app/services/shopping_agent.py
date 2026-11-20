@@ -220,7 +220,7 @@ class ShoppingAgent:
         except Exception as exc:
             logger.warning(
                 "Gemini intent extraction failed, using fallback",
-                extra={"event": "intent_extraction_fallback", "error": str(exc)},
+                extra={"event": "intent_extraction_fallback", "error_type": type(exc).__name__},
             )
             return _fallback_extract_intent(query)
 
@@ -232,17 +232,17 @@ class ShoppingAgent:
                 "Shopping intent successfully extracted",
                 extra={
                     "event": "intent_extracted",
-                    "keywords": intent.keywords,
-                    "category": intent.category,
-                    "min_budget": str(intent.min_budget) if intent.min_budget else None,
-                    "max_budget": str(intent.max_budget) if intent.max_budget else None,
+                    "terms_count": len(intent.keywords),
+                    "has_category": bool(intent.category),
+                    "has_min_budget": intent.min_budget is not None,
+                    "has_max_budget": intent.max_budget is not None,
                 },
             )
             return intent
         except Exception as exc:
             logger.warning(
                 "Failed to parse Gemini intent JSON, using heuristic fallback",
-                extra={"event": "intent_json_parse_error", "raw": raw_response[:200], "error": str(exc)},
+                extra={"event": "intent_json_parse_error", "error_type": type(exc).__name__},
             )
             return _fallback_extract_intent(query)
 

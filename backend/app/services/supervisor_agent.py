@@ -1,3 +1,4 @@
+from collections.abc import Callable
 import logging
 import re
 from typing import Literal
@@ -158,7 +159,8 @@ class SupervisorAgent:
     def process(
         self,
         message: str,
-        session: Session,
+        session: Session | None = None,
+        session_factory: Callable[[], Session] | None = None,
     ) -> SupervisorRouteResponse:
         destination, confidence, reason = self.route(message)
 
@@ -174,13 +176,27 @@ class SupervisorAgent:
 
         if destination == "shopping_agent":
             req = ShoppingSearchRequest(query=message)
-            try:
-                shopping_resp = self._shopping_agent.search(req, session)
-            except Exception as exc:
-                logger.error(
-                    "Catalogue search failed in supervisor",
-                    extra={"event": "supervisor_catalogue_search_error", "error_type": type(exc).__name__},
-                )
+            shopping_resp: ShoppingSearchResponse | None = None
+
+            if session is not None:
+                try:
+                    shopping_resp = self._shopping_agent.search(req, session)
+                except Exception as exc:
+                    logger.error(
+                        "Catalogue search failed in supervisor",
+                        extra={"event": "supervisor_catalogue_search_error", "error_type": type(exc).__name__},
+                    )
+            elif session_factory is not None:
+                try:
+                    with session_factory() as dyn_session:
+                        shopping_resp = self._shopping_agent.search(req, dyn_session)
+                except Exception as exc:
+                    logger.error(
+                        "Catalogue search failed in supervisor",
+                        extra={"event": "supervisor_catalogue_search_error", "error_type": type(exc).__name__},
+                    )
+
+            if shopping_resp is None:
                 shopping_resp = ShoppingSearchResponse(
                     query=message,
                     currency=self._catalogue_currency,
@@ -191,6 +207,7 @@ class SupervisorAgent:
                     limit=req.limit,
                     offset=req.offset,
                 )
+
             return SupervisorRouteResponse(
                 destination="shopping_agent",
                 confidence=confidence,

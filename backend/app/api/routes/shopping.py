@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from backend.app.api.auth_dependencies import get_optional_current_user
@@ -84,7 +84,7 @@ def search_products(
 )
 def chat_with_supervisor(
     body: QuestionRequest,
-    session: Session = Depends(get_db_session),
+    request: Request,
     gemini_service: QuestionAnswerer = Depends(get_gemini_service),
     settings: Settings = Depends(get_settings),
     current_user: User | None = Depends(get_optional_current_user),
@@ -93,8 +93,9 @@ def chat_with_supervisor(
     supervisor = SupervisorAgent(
         gemini_service, catalogue_currency=settings.catalogue_currency
     )
+    db_factory = getattr(request.app.state, "db_session_factory", None)
     try:
-        return supervisor.process(body.question, session)
+        return supervisor.process(body.question, session_factory=db_factory)
     except GeminiTimeoutError as exc:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,

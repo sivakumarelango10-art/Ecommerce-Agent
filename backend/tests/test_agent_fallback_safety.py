@@ -299,3 +299,67 @@ def test_supervisor_route_exception_logging_does_not_leak_sensitive_exception_de
             assert not hasattr(record, "error")
 
     assert found_fallback_log is True
+
+
+def test_shopping_agent_intent_extraction_exception_logging_sanitized(caplog):
+    """Verify that exceptions in ShoppingAgent.extract_intent() log only error_type and do not leak exception message or secrets."""
+    import logging
+    from backend.app.services.shopping_agent import ShoppingAgent
+
+    fake_secret = "AIzaSyFakeSecretGeminiKey99999_DO_NOT_LOG"
+    sensitive_exception = RuntimeError(f"Failed to query Gemini endpoint with secret token {fake_secret}")
+
+    mock_gemini = MagicMock()
+    mock_gemini.answer.side_effect = sensitive_exception
+
+    agent = ShoppingAgent(mock_gemini, catalogue_currency="INR")
+
+    with caplog.at_level(logging.WARNING):
+        intent = agent.extract_intent("Find running shoes under ₹2000")
+
+    # Intent extraction falls back to deterministic heuristic
+    assert intent is not None
+    assert fake_secret not in caplog.text
+    assert "Failed to query Gemini endpoint" not in caplog.text
+
+    found_fallback_log = False
+    for record in caplog.records:
+        if getattr(record, "event", None) == "intent_extraction_fallback":
+            found_fallback_log = True
+            assert getattr(record, "error_type", None) == "RuntimeError"
+            assert not hasattr(record, "error")
+
+    assert found_fallback_log is True
+
+
+def test_shopping_agent_intent_parse_error_logging_sanitized(caplog):
+    """Verify that unparseable Gemini responses containing sensitive tokens do not leak raw response or secrets."""
+    import logging
+    from backend.app.services.shopping_agent import ShoppingAgent
+
+    fake_secret = "ConfidentialCustomerSSN_000_12_3456_DO_NOT_LOG"
+    unparseable_raw = f"```json\n{{invalid_json: true, sensitive_payload: '{fake_secret}'}}\n```"
+
+    mock_gemini = MagicMock()
+    mock_gemini.answer.return_value = unparseable_raw
+
+    agent = ShoppingAgent(mock_gemini, catalogue_currency="INR")
+
+    with caplog.at_level(logging.WARNING):
+        intent = agent.extract_intent("Find running shoes under ₹2000")
+
+    # Intent extraction falls back to heuristic
+    assert intent is not None
+    assert fake_secret not in caplog.text
+    assert unparseable_raw not in caplog.text
+    assert "ConfidentialCustomerSSN" not in caplog.text
+
+    found_parse_error_log = False
+    for record in caplog.records:
+        if getattr(record, "event", None) == "intent_json_parse_error":
+            found_parse_error_log = True
+            assert getattr(record, "error_type", None) in ("JSONDecodeError", "ValidationError")
+            assert not hasattr(record, "raw")
+            assert not hasattr(record, "error")
+
+    assert found_parse_error_log is True

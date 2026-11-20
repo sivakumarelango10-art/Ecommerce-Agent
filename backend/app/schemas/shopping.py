@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from backend.app.core.constants import DEFAULT_CATALOGUE_CURRENCY
 from backend.app.schemas.catalog import ProductCategoryResponse
@@ -26,10 +26,12 @@ class ShoppingIntent(BaseModel):
     )
     product_name: str | None = Field(
         default=None,
+        max_length=200,
         description="Specific product name if mentioned.",
     )
     category: str | None = Field(
         default=None,
+        max_length=120,
         description="Category name or slug if mentioned.",
     )
     min_budget: Decimal | None = Field(
@@ -44,10 +46,12 @@ class ShoppingIntent(BaseModel):
     )
     currency: str | None = Field(
         default=None,
+        max_length=10,
         description="Currency code, for example INR.",
     )
     brand: str | None = Field(
         default=None,
+        max_length=100,
         description="Preferred brand name if mentioned.",
     )
     required_features: list[str] = Field(
@@ -56,6 +60,7 @@ class ShoppingIntent(BaseModel):
     )
     use_case: str | None = Field(
         default=None,
+        max_length=200,
         description="Intended use case, e.g. gaming, running, office.",
     )
     in_stock_only: bool | None = Field(
@@ -81,8 +86,24 @@ class ShoppingIntent(BaseModel):
     )
     clarification_message: str | None = Field(
         default=None,
+        max_length=1000,
         description="Question to ask user if the request is ambiguous or insufficient.",
     )
+
+    @field_validator("keywords", "required_features", mode="before")
+    @classmethod
+    def bound_intent_lists(cls, v: object) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        bounded: list[str] = []
+        for item in v:
+            if isinstance(item, str):
+                cleaned = item.strip()
+                if cleaned:
+                    bounded.append(cleaned[:80])
+            if len(bounded) >= 10:
+                break
+        return bounded
 
 
 class ShoppingSearchRequest(BaseModel):
@@ -90,7 +111,7 @@ class ShoppingSearchRequest(BaseModel):
 
     query: Annotated[str | None, Field(default=None, max_length=1000)] = None
     category: Annotated[str | None, Field(default=None, max_length=120)] = None
-    keywords: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list, max_length=10)
     min_price: Decimal | None = Field(default=None, ge=0)
     max_price: Decimal | None = Field(default=None, ge=0)
     currency: Annotated[str | None, Field(default=None, max_length=10)] = None
@@ -100,6 +121,21 @@ class ShoppingSearchRequest(BaseModel):
     sort_by: SortOrder | None = None
     limit: Annotated[int, Field(default=20, ge=1, le=100)] = 20
     offset: Annotated[int, Field(default=0, ge=0)] = 0
+
+    @field_validator("keywords")
+    @classmethod
+    def validate_keywords(cls, v: list[str]) -> list[str]:
+        if len(v) > 10:
+            raise ValueError("keywords cannot contain more than 10 items")
+        cleaned_list: list[str] = []
+        for kw in v:
+            trimmed = kw.strip()
+            if not trimmed:
+                raise ValueError("keyword cannot be blank")
+            if len(trimmed) > 80:
+                raise ValueError("keyword cannot exceed 80 characters")
+            cleaned_list.append(trimmed)
+        return cleaned_list
 
     @model_validator(mode="after")
     def validate_budget_range(self) -> "ShoppingSearchRequest":
