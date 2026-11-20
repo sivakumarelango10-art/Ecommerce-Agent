@@ -5,7 +5,10 @@ from typing import Literal
 from google.genai import types
 from sqlalchemy.orm import Session
 
-from backend.app.core.constants import POLICY_UNAVAILABLE_MESSAGE
+from backend.app.core.constants import (
+    DEFAULT_CATALOGUE_CURRENCY,
+    POLICY_UNAVAILABLE_MESSAGE,
+)
 from backend.app.schemas.shopping import (
     ShoppingSearchRequest,
     SupervisorRouteResponse,
@@ -88,9 +91,13 @@ class SupervisorAgent:
         self,
         gemini_service: GeminiService,
         shopping_agent: ShoppingAgent | None = None,
+        catalogue_currency: str = DEFAULT_CATALOGUE_CURRENCY,
     ) -> None:
         self._gemini = gemini_service
-        self._shopping_agent = shopping_agent or ShoppingAgent(gemini_service)
+        self._catalogue_currency = catalogue_currency.strip().upper()
+        self._shopping_agent = shopping_agent or ShoppingAgent(
+            gemini_service, catalogue_currency=self._catalogue_currency
+        )
 
     def route(
         self, message: str

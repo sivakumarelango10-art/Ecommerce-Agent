@@ -7,8 +7,9 @@ from typing import Protocol
 from sqlalchemy.orm import Session
 
 from backend.app.core.constants import (
-    CATALOGUE_CURRENCY,
-    SUPPORTED_CURRENCIES,
+    DEFAULT_CATALOGUE_CURRENCY,
+    get_currency_symbol,
+    get_supported_currency_aliases,
 )
 from backend.app.db.models import Product
 from backend.app.schemas.catalog import ProductCategoryResponse
@@ -80,16 +81,19 @@ def _clean_json_text(text: str) -> str:
     return cleaned.strip()
 
 
+_GROUPED_NUMBER_PATTERN = r"(?:\d{1,3}(?:,\d{2,3})+|\d+)(?:\.\d{1,2})?"
+
+
 def _fallback_extract_intent(query: str) -> ShoppingIntent:
     """Deterministic fallback if Gemini returns unparseable content."""
     clean_query = query.strip()
     raw_words = [w for w in re.findall(r"\b[A-Za-z0-9_-]+\b", clean_query) if len(w) > 2]
-    words = [w for w in raw_words if w.lower() not in _SEARCH_STOP_WORDS]
+    words = [w for w in raw_words if w.lower() not in _SEARCH_STOP_WORDS and not w.isdigit()]
 
     # Currency extraction
     detected_currency: str | None = None
     curr_match = re.search(
-        r"\b(USD|INR|EUR|GBP|CAD|AUD|JPY|rupees?|euros?|pounds?|dollars?)\b|[€£₹¥$]",
+        r"\b(USD|INR|EUR|GBP|CAD|AUD|JPY|rupees?|euros?|pounds?|dollars?|rs\.?)\b|[€£₹¥$]|C\$|A\$",
         clean_query,
         re.IGNORECASE,
     )
@@ -97,40 +101,72 @@ def _fallback_extract_intent(query: str) -> ShoppingIntent:
         matched_curr = curr_match.group(0).upper()
         if matched_curr in {"$", "DOLLAR", "DOLLARS"}:
             detected_currency = "USD"
-        elif matched_curr in {"₹", "RUPEE", "RUPEES"}:
+        elif matched_curr in {"₹", "RUPEE", "RUPEES", "RS", "RS."}:
             detected_currency = "INR"
         elif matched_curr in {"€", "EURO", "EUROS"}:
             detected_currency = "EUR"
         elif matched_curr in {"£", "POUND", "POUNDS"}:
             detected_currency = "GBP"
+        elif matched_curr in {"¥", "YEN"}:
+            detected_currency = "JPY"
+        elif matched_curr in {"C$"}:
+            detected_currency = "CAD"
+        elif matched_curr in {"A$"}:
+            detected_currency = "AUD"
         else:
             detected_currency = matched_curr
 
-    # Heuristic price extraction
+    # Heuristic price extraction supporting grouped digits ($1,000, ₹70,000, 1,00,000)
     max_budget: Decimal | None = None
     min_budget: Decimal | None = None
     under_match = re.search(
-        r"(?:under|below|less than|up to)\s*(?:[\$€£₹¥]|\b(?:usd|inr|eur|gbp|rupees?|dollars?)\b\s*)?(\d+(?:\.\d{1,2})?)",
+        rf"(?:under|below|less than|up to)\s*(?:[\$€£₹¥]|C\$|A\$|\b(?:usd|inr|eur|gbp|cad|aud|jpy|rupees?|dollars?|euros?|pounds?|rs\.?)\b\s*)?({_GROUPED_NUMBER_PATTERN})",
         clean_query,
         re.IGNORECASE,
     )
     if under_match:
         try:
-            max_budget = Decimal(under_match.group(1))
+            val_str = under_match.group(1).replace(",", "")
+            max_budget = Decimal(val_str)
         except InvalidOperation:
             pass
 
     between_match = re.search(
-        r"(?:between|from)\s*(?:[\$€£₹¥]|\b(?:usd|inr|eur|gbp|rupees?|dollars?)\b\s*)?(\d+(?:\.\d{1,2})?)\s*(?:and|to)\s*(?:[\$€£₹¥]|\b(?:usd|inr|eur|gbp|rupees?|dollars?)\b\s*)?(\d+(?:\.\d{1,2})?)",
+        rf"(?:between|from)\s*(?:[\$€£₹¥]|C\$|A\$|\b(?:usd|inr|eur|gbp|cad|aud|jpy|rupees?|dollars?|euros?|pounds?|rs\.?)\b\s*)?({_GROUPED_NUMBER_PATTERN})\s*(?:and|to)\s*(?:[\$€£₹¥]|C\$|A\$|\b(?:usd|inr|eur|gbp|cad|aud|jpy|rupees?|dollars?|euros?|pounds?|rs\.?)\b\s*)?({_GROUPED_NUMBER_PATTERN})",
         clean_query,
         re.IGNORECASE,
     )
     if between_match:
         try:
-            min_budget = Decimal(between_match.group(1))
-            max_budget = Decimal(between_match.group(2))
+            min_val_str = between_match.group(1).replace(",", "")
+            max_val_str = between_match.group(2).replace(",", "")
+            min_budget = Decimal(min_val_str)
+            max_budget = Decimal(max_val_str)
         except InvalidOperation:
             pass
+
+    if max_budget is None and min_budget is None:
+        budget_match = re.search(
+            rf"(?:budget(?: of)?|for|max(?:imum)?)\s*(?:[\$€£₹¥]|C\$|A\$|\b(?:usd|inr|eur|gbp|cad|aud|jpy|rupees?|dollars?|euros?|pounds?|rs\.?)\b\s*)?({_GROUPED_NUMBER_PATTERN})",
+            clean_query,
+            re.IGNORECASE,
+        )
+        if budget_match:
+            try:
+                max_budget = Decimal(budget_match.group(1).replace(",", ""))
+            except InvalidOperation:
+                pass
+
+    if max_budget is None and min_budget is None:
+        symbol_price_match = re.search(
+            rf"(?:[\$€£₹¥]|C\$|A\$)\s*({_GROUPED_NUMBER_PATTERN})",
+            clean_query,
+        )
+        if symbol_price_match:
+            try:
+                max_budget = Decimal(symbol_price_match.group(1).replace(",", ""))
+            except InvalidOperation:
+                pass
 
     # Ambiguity check
     vague_phrases = {"buy something", "shop", "help me buy", "show products", "anything", "show me"}
@@ -152,8 +188,15 @@ def _fallback_extract_intent(query: str) -> ShoppingIntent:
 
 
 class ShoppingAgent:
-    def __init__(self, gemini_service: TextGenerator | None = None) -> None:
+    def __init__(
+        self,
+        gemini_service: TextGenerator | None = None,
+        catalogue_currency: str = DEFAULT_CATALOGUE_CURRENCY,
+    ) -> None:
         self._gemini = gemini_service
+        self._catalogue_currency = catalogue_currency.strip().upper()
+        self._supported_currencies = get_supported_currency_aliases(self._catalogue_currency)
+        self._currency_symbol = get_currency_symbol(self._catalogue_currency)
 
     def extract_intent(self, query: str) -> ShoppingIntent:
         query = query.strip()
@@ -202,14 +245,23 @@ class ShoppingAgent:
             return _fallback_extract_intent(query)
 
     def generate_grounded_explanation(
-        self, product: Product, intent: ShoppingIntent | None
+        self,
+        product: Product,
+        intent: ShoppingIntent | None,
+        max_budget: Decimal | None = None,
     ) -> str:
         """Produce an explanation grounded strictly in verified database fields."""
         reasons: list[str] = []
-        price_str = f"${product.price:.2f}"
+        symbol = self._currency_symbol
+        price_str = f"{symbol}{product.price:.2f}"
 
-        if intent and intent.max_budget is not None and product.price <= intent.max_budget:
-            reasons.append(f"{price_str} is within your budget of ${intent.max_budget:.2f}")
+        effective_max = (
+            max_budget
+            if max_budget is not None
+            else (intent.max_budget if intent else None)
+        )
+        if effective_max is not None and product.price <= effective_max:
+            reasons.append(f"{price_str} is within your budget of {symbol}{effective_max:.2f}")
         else:
             reasons.append(f"Priced at {price_str}")
 
@@ -240,7 +292,7 @@ class ShoppingAgent:
                 return ShoppingSearchResponse(
                     query=request.query,
                     intent=intent,
-                    currency=CATALOGUE_CURRENCY,
+                    currency=self._catalogue_currency,
                     status="insufficient_information",
                     message=(
                         intent.clarification_message
@@ -257,23 +309,24 @@ class ShoppingAgent:
         requested_currency = request.currency or (intent.currency if intent else None)
         if requested_currency:
             norm_curr = requested_currency.strip().upper()
-            if norm_curr not in SUPPORTED_CURRENCIES:
+            if norm_curr not in self._supported_currencies:
                 logger.info(
                     "Unsupported currency requested",
                     extra={
                         "event": "unsupported_currency",
                         "requested_currency": requested_currency,
+                        "catalogue_currency": self._catalogue_currency,
                     },
                 )
                 return ShoppingSearchResponse(
                     query=request.query,
                     intent=intent,
-                    currency=CATALOGUE_CURRENCY,
+                    currency=self._catalogue_currency,
                     status="unsupported_currency",
                     message=(
-                        f"The catalogue prices and budgets are in {CATALOGUE_CURRENCY}. "
+                        f"The catalogue prices and budgets are in {self._catalogue_currency}. "
                         f"Searches with budget in '{requested_currency}' are not supported, "
-                        f"and currency conversions are not performed. Please specify your budget in {CATALOGUE_CURRENCY}."
+                        f"and currency conversions are not performed. Please specify your budget in {self._catalogue_currency}."
                     ),
                     products=[],
                     total_count=0,
@@ -359,9 +412,9 @@ class ShoppingAgent:
             if min_price is not None or max_price is not None:
                 budget_part = []
                 if min_price is not None:
-                    budget_part.append(f"min ${min_price:.2f}")
+                    budget_part.append(f"min {self._currency_symbol}{min_price:.2f}")
                 if max_price is not None:
-                    budget_part.append(f"max ${max_price:.2f}")
+                    budget_part.append(f"max {self._currency_symbol}{max_price:.2f}")
                 criteria_details.append(f"with budget ({', '.join(budget_part)})")
             if keywords:
                 criteria_details.append(f"matching '{', '.join(keywords)}'")
@@ -370,6 +423,7 @@ class ShoppingAgent:
             return ShoppingSearchResponse(
                 query=request.query,
                 intent=intent,
+                currency=self._catalogue_currency,
                 status="no_results",
                 message=f"No products found {criteria_summary}. Try broadening your search or adjusting filters.",
                 products=[],
@@ -381,7 +435,9 @@ class ShoppingAgent:
         items: list[ShoppingProductItem] = []
         for p in products:
             qty = p.inventory.available_quantity if p.inventory else 0
-            explanation = self.generate_grounded_explanation(p, intent)
+            explanation = self.generate_grounded_explanation(
+                p, intent, max_budget=max_price
+            )
             items.append(
                 ShoppingProductItem(
                     id=p.id,
@@ -389,6 +445,7 @@ class ShoppingAgent:
                     name=p.name,
                     description=p.description,
                     price=p.price,
+                    currency=self._catalogue_currency,
                     categories=[ProductCategoryResponse.model_validate(c) for c in p.categories],
                     in_stock=qty > 0,
                     available_quantity=qty,
@@ -399,6 +456,7 @@ class ShoppingAgent:
         return ShoppingSearchResponse(
             query=request.query,
             intent=intent,
+            currency=self._catalogue_currency,
             status="success",
             message=f"Found {total_count} matching product{'s' if total_count != 1 else ''}.",
             products=items,

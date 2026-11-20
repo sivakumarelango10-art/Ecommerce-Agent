@@ -4,7 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from backend.app.api.auth_dependencies import get_optional_current_user
-from backend.app.api.dependencies import QuestionAnswerer, get_gemini_service
+from backend.app.api.dependencies import (
+    QuestionAnswerer,
+    get_gemini_service,
+    get_settings,
+)
+from backend.app.core.config import Settings
 from backend.app.db.models import User
 from backend.app.db.session import get_db_session
 from backend.app.schemas.questions import QuestionRequest
@@ -35,13 +40,16 @@ def search_products(
     request: ShoppingSearchRequest,
     session: Session = Depends(get_db_session),
     gemini_service: QuestionAnswerer = Depends(get_gemini_service),
+    settings: Settings = Depends(get_settings),
     current_user: User | None = Depends(get_optional_current_user),
 ) -> ShoppingSearchResponse:
     """Discover real catalogue products using Gemini intent extraction and PostgreSQL.
 
     Supports both guests and authenticated users.
     """
-    shopping_agent = ShoppingAgent(gemini_service)
+    shopping_agent = ShoppingAgent(
+        gemini_service, catalogue_currency=settings.catalogue_currency
+    )
     try:
         response = shopping_agent.search(request, session)
         return response
@@ -78,10 +86,13 @@ def chat_with_supervisor(
     body: QuestionRequest,
     session: Session = Depends(get_db_session),
     gemini_service: QuestionAnswerer = Depends(get_gemini_service),
+    settings: Settings = Depends(get_settings),
     current_user: User | None = Depends(get_optional_current_user),
 ) -> SupervisorRouteResponse:
     """Supervised conversational endpoint routing between shopping discovery and general advice."""
-    supervisor = SupervisorAgent(gemini_service)
+    supervisor = SupervisorAgent(
+        gemini_service, catalogue_currency=settings.catalogue_currency
+    )
     try:
         return supervisor.process(body.question, session)
     except GeminiTimeoutError as exc:

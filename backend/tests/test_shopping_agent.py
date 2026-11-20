@@ -6,9 +6,11 @@ from uuid import uuid4
 import httpx
 import pytest
 from google.genai import errors, types
+from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from backend.app.core.config import Settings
 from backend.app.core.constants import (
     CATALOGUE_CURRENCY,
     POLICY_UNAVAILABLE_MESSAGE,
@@ -28,7 +30,10 @@ from backend.app.services.gemini_service import (
     GeminiTimeoutError,
 )
 from backend.app.services.product_discovery_service import search_catalogue_products
-from backend.app.services.shopping_agent import ShoppingAgent
+from backend.app.services.shopping_agent import (
+    ShoppingAgent,
+    _fallback_extract_intent,
+)
 from backend.app.services.supervisor_agent import SupervisorAgent
 
 
@@ -943,3 +948,124 @@ def test_missing_policy_information_returns_unavailable_message(isolated_db: Ses
     assert "not currently available" in resp.general_answer
     assert "30-day" not in resp.general_answer
     assert "free shipping" not in resp.general_answer
+
+
+# --- 18. Catalogue Currency Source of Truth & Grouped Number Tests ---
+
+@pytest.mark.parametrize("valid_code", ["USD", "usd", "INR", "inr", "EUR", "eur", "GBP", "JPY", "CAD", "AUD"])
+def test_settings_catalogue_currency_valid(valid_code: str):
+    s = Settings(
+        gemini_api_key="test-key",
+        database_url="postgresql+psycopg://user:pass@localhost:5432/test",
+        auth_secret_key="test-secret-at-least-32-characters-long",
+        catalogue_currency=valid_code,
+    )
+    assert s.catalogue_currency == valid_code.strip().upper()
+
+
+@pytest.mark.parametrize("invalid_code", ["US", "123", "INVALID", "TOOLONG", "", "   ", "XYZ", "usd1"])
+def test_settings_catalogue_currency_invalid(invalid_code: str):
+    with pytest.raises(ValidationError):
+        Settings(
+            gemini_api_key="test-key",
+            database_url="postgresql+psycopg://user:pass@localhost:5432/test",
+            auth_secret_key="test-secret-at-least-32-characters-long",
+            catalogue_currency=invalid_code,
+        )
+
+
+def test_fallback_extract_intent_grouped_numbers():
+    # $1,000 -> max_budget 1000, keywords ['laptop']
+    intent1 = _fallback_extract_intent("laptop under $1,000")
+    assert intent1.max_budget == Decimal("1000")
+    assert intent1.currency == "USD"
+    assert "laptop" in intent1.keywords
+    assert "000" not in intent1.keywords
+
+    # ₹70,000 -> max_budget 70000, keywords ['phone']
+    intent2 = _fallback_extract_intent("phone under ₹70,000")
+    assert intent2.max_budget == Decimal("70000")
+    assert intent2.currency == "INR"
+    assert "phone" in intent2.keywords
+    assert "000" not in intent2.keywords
+
+    # ₹1,00,000 -> max_budget 100000
+    intent3 = _fallback_extract_intent("laptop under ₹1,00,000")
+    assert intent3.max_budget == Decimal("100000")
+    assert intent3.currency == "INR"
+
+    # between $1,200 and $3,500
+    intent4 = _fallback_extract_intent("camera between $1,200 and $3,500")
+    assert intent4.min_budget == Decimal("1200")
+    assert intent4.max_budget == Decimal("3500")
+    assert intent4.currency == "USD"
+
+
+def test_inr_catalogue_configuration(isolated_db: Session):
+    agent_inr = ShoppingAgent(catalogue_currency="INR")
+
+    # Search with INR budget -> Accepted, products returned with currency INR
+    resp = agent_inr.search(
+        ShoppingSearchRequest(category="audio", max_price=Decimal("100.00"), currency="INR"),
+        isolated_db,
+    )
+    assert resp.status == "success"
+    assert resp.currency == "INR"
+    assert len(resp.products) == 1
+    assert resp.products[0].sku == "ANK-SND-01"
+    assert resp.products[0].currency == "INR"
+    assert "₹49.99" in resp.products[0].recommendation_reason
+    assert "₹100.00" in resp.products[0].recommendation_reason
+
+    # Query with natural language ₹70,000
+    resp_nl = agent_inr.search(ShoppingSearchRequest(query="earbuds under ₹70,000"), isolated_db)
+    assert resp_nl.status == "success"
+    assert resp_nl.currency == "INR"
+    assert any(p.sku == "ANK-SND-01" for p in resp_nl.products)
+
+    # Search with USD budget on INR catalogue -> Rejected as unsupported_currency without numerical comparison
+    resp_usd = agent_inr.search(
+        ShoppingSearchRequest(category="audio", max_price=Decimal("100.00"), currency="USD"),
+        isolated_db,
+    )
+    assert resp_usd.status == "unsupported_currency"
+    assert resp_usd.total_count == 0
+    assert resp_usd.currency == "INR"
+    assert "INR" in resp_usd.message
+    assert "USD" in resp_usd.message
+
+
+def test_usd_catalogue_rejects_inr_without_conversion(isolated_db: Session):
+    agent_usd = ShoppingAgent(catalogue_currency="USD")
+
+    # Grouped number $1,000 succeeds
+    resp_grouped = agent_usd.search(ShoppingSearchRequest(query="headphones under $1,000"), isolated_db)
+    assert resp_grouped.status == "success"
+    assert resp_grouped.currency == "USD"
+
+    # INR request on USD catalogue is rejected without numerical comparison
+    resp_inr = agent_usd.search(
+        ShoppingSearchRequest(category="audio", max_price=Decimal("5000.00"), currency="INR"),
+        isolated_db,
+    )
+    assert resp_inr.status == "unsupported_currency"
+    assert resp_inr.total_count == 0
+    assert resp_inr.currency == "USD"
+    assert "USD" in resp_inr.message
+
+
+def test_api_shopping_search_with_configured_currency(api_client):
+    client, _ = api_client
+    # Switch app state settings catalogue_currency to INR
+    original_currency = client.app.state.settings.catalogue_currency
+    try:
+        client.app.state.settings.catalogue_currency = "INR"
+        response = client.post(
+            "/api/v1/shopping/search",
+            json={"category": "audio", "max_price": 100.0, "currency": "INR"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["currency"] == "INR"
+    finally:
+        client.app.state.settings.catalogue_currency = original_currency
