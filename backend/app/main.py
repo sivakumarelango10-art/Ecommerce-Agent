@@ -13,6 +13,7 @@ from backend.app.api.routes.catalog import router as catalog_router
 from backend.app.api.routes.customers import router as customers_router
 from backend.app.api.routes.health import router as health_router
 from backend.app.api.routes.questions import router as questions_router
+from backend.app.api.routes.shopping import router as shopping_router
 from backend.app.core.config import Settings, load_settings
 from backend.app.core.logging import configure_logging
 from backend.app.db.session import create_database_engine, create_session_factory
@@ -67,6 +68,7 @@ def create_app(
     application.include_router(customers_router, prefix="/api/v1")
     application.include_router(catalog_router, prefix="/api/v1")
     application.include_router(questions_router, prefix="/api/v1")
+    application.include_router(shopping_router, prefix="/api/v1")
 
     @application.exception_handler(SQLAlchemyError)
     async def database_error_handler(_request, exc: SQLAlchemyError) -> JSONResponse:

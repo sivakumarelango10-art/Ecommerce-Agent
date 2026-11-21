@@ -3,6 +3,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
+from backend.app.core.constants import (
+    DEFAULT_CATALOGUE_CURRENCY,
+    ISO_4217_CURRENCY_CODES,
+)
+
 
 class ConfigurationError(RuntimeError):
     """Raised when required application configuration is missing or invalid."""
@@ -34,6 +39,10 @@ class Settings(BaseSettings):
         gt=0,
         le=1440,
         validation_alias="ACCESS_TOKEN_EXPIRE_MINUTES",
+    )
+    catalogue_currency: str = Field(
+        default=DEFAULT_CATALOGUE_CURRENCY,
+        validation_alias="CATALOGUE_CURRENCY",
     )
 
     @field_validator("gemini_api_key")
@@ -70,6 +79,18 @@ class Settings(BaseSettings):
         if len(value.get_secret_value().encode("utf-8")) < 32:
             raise ValueError("AUTH_SECRET_KEY must be at least 32 bytes")
         return value
+
+    @field_validator("catalogue_currency")
+    @classmethod
+    def catalogue_currency_must_be_valid_iso_code(cls, value: str) -> str:
+        if not isinstance(value, str):
+            raise ValueError("CATALOGUE_CURRENCY must be a string")
+        clean = value.strip().upper()
+        if len(clean) != 3 or not clean.isalpha() or clean not in ISO_4217_CURRENCY_CODES:
+            raise ValueError(
+                f"CATALOGUE_CURRENCY must be a valid 3-letter ISO 4217 currency code (e.g. USD, INR, EUR), got '{value}'"
+            )
+        return clean
 
 
 def load_settings(*, env_file: str | None = ".env") -> Settings:
