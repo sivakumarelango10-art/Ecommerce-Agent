@@ -9,6 +9,7 @@ from sqlalchemy import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from backend.app.api.routes.auth import router as auth_router
+from backend.app.api.routes.cart import router as cart_router
 from backend.app.api.routes.catalog import router as catalog_router
 from backend.app.api.routes.customers import router as customers_router
 from backend.app.api.routes.health import router as health_router
@@ -67,6 +68,7 @@ def create_app(
     application.include_router(auth_router, prefix="/api/v1")
     application.include_router(customers_router, prefix="/api/v1")
     application.include_router(catalog_router, prefix="/api/v1")
+    application.include_router(cart_router, prefix="/api/v1")
     application.include_router(questions_router, prefix="/api/v1")
     application.include_router(shopping_router, prefix="/api/v1")
 
