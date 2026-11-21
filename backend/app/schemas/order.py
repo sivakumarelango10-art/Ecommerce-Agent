@@ -116,3 +116,40 @@ class OrderSummaryResponse(BaseModel):
     total_amount: Decimal = Field(..., max_digits=12, decimal_places=2)
     item_count: int
     created_at: datetime
+
+
+class CustomerOrderItemSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    product_sku: str
+    product_name: str
+    quantity: int = Field(..., ge=1)
+    unit_price: Decimal = Field(..., max_digits=12, decimal_places=2)
+    line_total: Decimal = Field(..., max_digits=12, decimal_places=2)
+
+
+class CustomerOrderStatusSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    order_number: str
+    status: str
+    currency: str
+    total_amount: Decimal = Field(..., max_digits=12, decimal_places=2)
+    item_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class CustomerOrderDetailSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    order_number: str
+    status: str
+    currency: str
+    subtotal: Decimal = Field(..., max_digits=12, decimal_places=2)
+    shipping_fee: Decimal = Field(..., max_digits=12, decimal_places=2)
+    tax: Decimal = Field(..., max_digits=12, decimal_places=2)
+    total_amount: Decimal = Field(..., max_digits=12, decimal_places=2)
+    created_at: datetime
+    shipping_snapshot: ShippingAddressSnapshotResponse
+    items: list[CustomerOrderItemSummary] = Field(default_factory=list)
