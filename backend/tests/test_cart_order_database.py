@@ -309,6 +309,7 @@ def test_user_scoped_idempotency_uniqueness(isolated_db: Session):
         subtotal=Decimal("100.00"),
         total_amount=Decimal("100.00"),
         idempotency_key="checkout-token-xyz",
+        request_fingerprint="a" * 64,
     )
     isolated_db.add(ord1)
     isolated_db.commit()
@@ -326,6 +327,7 @@ def test_user_scoped_idempotency_uniqueness(isolated_db: Session):
         subtotal=Decimal("150.00"),
         total_amount=Decimal("150.00"),
         idempotency_key="checkout-token-xyz",
+        request_fingerprint="a" * 64,
     )
     isolated_db.add(ord1_dup)
     with pytest.raises(IntegrityError):
@@ -345,6 +347,7 @@ def test_user_scoped_idempotency_uniqueness(isolated_db: Session):
         subtotal=Decimal("200.00"),
         total_amount=Decimal("200.00"),
         idempotency_key="checkout-token-xyz",
+        request_fingerprint="b" * 64,
     )
     isolated_db.add(ord2)
     isolated_db.commit()
@@ -840,12 +843,37 @@ def test_schema_indexes_and_foreign_keys(isolated_db: Session):
 
 # --- 18. Isolated PostgreSQL Migration Verification (Optional) ---
 
-@pytest.mark.skipif(
-    not __import__("os").environ.get("PHASE_5_TEST_DATABASE_URL"),
-    reason="Set PHASE_5_TEST_DATABASE_URL to an isolated local PostgreSQL test database.",
-)
-def test_postgresql_migration_0003_upgrade_downgrade():
+def _get_pg_test_db_url() -> str | None:
     import os
+    url = os.getenv("POSTGRES_TEST_DATABASE_URL")
+    if not url:
+        try:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment")
+            val, _ = winreg.QueryValueEx(key, "POSTGRES_TEST_DATABASE_URL")
+            url = val
+            os.environ["POSTGRES_TEST_DATABASE_URL"] = val
+        except Exception:
+            pass
+    if not url:
+        url = os.getenv("PHASE_5_TEST_DATABASE_URL")
+    if not url:
+        return None
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    db_name = parsed.path.lstrip("/")
+    if db_name != "ecommerce_agent_test":
+        raise RuntimeError(f"Safety violation: Expected ecommerce_agent_test, got {db_name}")
+    if "dev" in db_name.lower():
+        raise RuntimeError("Safety violation: Cannot target dev database")
+    return url
+
+
+@pytest.mark.skipif(
+    not _get_pg_test_db_url(),
+    reason="Set POSTGRES_TEST_DATABASE_URL to an isolated local PostgreSQL test database.",
+)
+def test_postgresql_migration_0003_upgrade_downgrade(monkeypatch):
     from pathlib import Path
     from alembic import command
     from alembic.config import Config
@@ -853,7 +881,10 @@ def test_postgresql_migration_0003_upgrade_downgrade():
 
     root = Path(__file__).resolve().parents[2]
     config = Config(str(root / "alembic.ini"))
-    url = os.environ["PHASE_5_TEST_DATABASE_URL"]
+    url = _get_pg_test_db_url()
+    assert url is not None
+    monkeypatch.setenv("DATABASE_URL", url)
+    config.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
 
     # Upgrade to head
     command.upgrade(config, "head")
@@ -876,3 +907,110 @@ def test_postgresql_migration_0003_upgrade_downgrade():
         assert "orders" not in tables2
     finally:
         pg_engine2.dispose()
+
+    # Re-upgrade to head so database is ready for subsequent operations
+    command.upgrade(config, "head")
+
+
+# --- 19. Request Fingerprint Check Constraint Validations ---
+
+def test_request_fingerprint_check_constraint_validations(isolated_db: Session):
+    user = _create_user(isolated_db, "fp_constraint_user")
+
+    # 1. Both fields NULL is allowed
+    ord_both_null = Order(
+        order_number="ORD-FP-01",
+        user_id=user.id,
+        shipping_recipient_name="User",
+        shipping_line1="123 St",
+        shipping_city="City",
+        shipping_region="Region",
+        shipping_postal_code="560001",
+        shipping_country_code="IN",
+        subtotal=Decimal("100.00"),
+        total_amount=Decimal("100.00"),
+        idempotency_key=None,
+        request_fingerprint=None,
+    )
+    isolated_db.add(ord_both_null)
+    isolated_db.commit()
+    assert ord_both_null.id is not None
+
+    # 2. Both fields populated with a 64-character fingerprint is allowed
+    ord_both_valid = Order(
+        order_number="ORD-FP-02",
+        user_id=user.id,
+        shipping_recipient_name="User",
+        shipping_line1="123 St",
+        shipping_city="City",
+        shipping_region="Region",
+        shipping_postal_code="560001",
+        shipping_country_code="IN",
+        subtotal=Decimal("100.00"),
+        total_amount=Decimal("100.00"),
+        idempotency_key="valid-key-002",
+        request_fingerprint="f" * 64,
+    )
+    isolated_db.add(ord_both_valid)
+    isolated_db.commit()
+    assert ord_both_valid.id is not None
+
+    # 3. Key populated + fingerprint NULL is rejected
+    ord_key_only = Order(
+        order_number="ORD-FP-03",
+        user_id=user.id,
+        shipping_recipient_name="User",
+        shipping_line1="123 St",
+        shipping_city="City",
+        shipping_region="Region",
+        shipping_postal_code="560001",
+        shipping_country_code="IN",
+        subtotal=Decimal("100.00"),
+        total_amount=Decimal("100.00"),
+        idempotency_key="key-without-fp",
+        request_fingerprint=None,
+    )
+    isolated_db.add(ord_key_only)
+    with pytest.raises(IntegrityError):
+        isolated_db.commit()
+    isolated_db.rollback()
+
+    # 4. Key NULL + fingerprint populated is rejected
+    ord_fp_only = Order(
+        order_number="ORD-FP-04",
+        user_id=user.id,
+        shipping_recipient_name="User",
+        shipping_line1="123 St",
+        shipping_city="City",
+        shipping_region="Region",
+        shipping_postal_code="560001",
+        shipping_country_code="IN",
+        subtotal=Decimal("100.00"),
+        total_amount=Decimal("100.00"),
+        idempotency_key=None,
+        request_fingerprint="f" * 64,
+    )
+    isolated_db.add(ord_fp_only)
+    with pytest.raises(IntegrityError):
+        isolated_db.commit()
+    isolated_db.rollback()
+
+    # 5. Invalid fingerprint length (< 64 or > 64) is rejected
+    ord_invalid_len = Order(
+        order_number="ORD-FP-05",
+        user_id=user.id,
+        shipping_recipient_name="User",
+        shipping_line1="123 St",
+        shipping_city="City",
+        shipping_region="Region",
+        shipping_postal_code="560001",
+        shipping_country_code="IN",
+        subtotal=Decimal("100.00"),
+        total_amount=Decimal("100.00"),
+        idempotency_key="key-with-short-fp",
+        request_fingerprint="short_fingerprint_less_than_64_chars",
+    )
+    isolated_db.add(ord_invalid_len)
+    with pytest.raises(IntegrityError):
+        isolated_db.commit()
+    isolated_db.rollback()

@@ -290,6 +290,11 @@ class Order(TimestampMixin, Base):
             "length(shipping_country_code) = 2",
             name="shipping_country_code_length",
         ),
+        CheckConstraint(
+            "(idempotency_key IS NULL AND request_fingerprint IS NULL) "
+            "OR (idempotency_key IS NOT NULL AND request_fingerprint IS NOT NULL AND length(request_fingerprint) = 64)",
+            name="ck_orders_request_fingerprint_valid",
+        ),
         Index("ix_orders_order_number", "order_number", unique=True),
         Index("ix_orders_user_created", "user_id", "created_at"),
         UniqueConstraint("user_id", "idempotency_key", name="uq_orders_user_idempotency"),
@@ -349,6 +354,7 @@ class Order(TimestampMixin, Base):
     )
     total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     idempotency_key: Mapped[str | None] = mapped_column(String(128))
+    request_fingerprint: Mapped[str | None] = mapped_column(String(64))
 
     user: Mapped[User] = relationship(back_populates="orders")
     shipping_address: Mapped[Address | None] = relationship()

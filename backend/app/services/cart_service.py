@@ -14,6 +14,69 @@ from backend.app.schemas.cart import CartItemResponse, CartResponse
 logger = logging.getLogger(__name__)
 
 
+def is_cart_user_collision(exc: IntegrityError) -> bool:
+    """Determine whether an IntegrityError was caused specifically by uq_carts_user_id."""
+    orig = getattr(exc, "orig", None)
+    if hasattr(orig, "diag") and getattr(orig.diag, "constraint_name", None):
+        return orig.diag.constraint_name == "uq_carts_user_id"
+    err_str = str(exc).lower()
+    return "uq_carts_user_id" in err_str or "carts.user_id" in err_str
+
+
+def get_or_create_cart_for_update(
+    session: Session,
+    user_id: UUID,
+) -> Cart:
+    """Retrieve the cart for the user under an exclusive row lock or create one safely.
+
+    Guarantees:
+    - Serializes with any other transaction mutating the user's cart or checking out.
+    - Uses a database SAVEPOINT (begin_nested) to isolate cart creation.
+    - If a concurrent transaction created the cart, recovers from IntegrityError on
+      uq_carts_user_id, rolls back savepoint, and locks the winning cart row with with_for_update().
+    - Returns an exclusively locked Cart row in all scenarios.
+    """
+    cart = session.scalar(
+        select(Cart)
+        .where(Cart.user_id == user_id)
+        .options(selectinload(Cart.items).selectinload(CartItem.product))
+        .with_for_update()
+    )
+    if cart is not None:
+        return cart
+
+    try:
+        with session.begin_nested():
+            cart = Cart(user_id=user_id)
+            session.add(cart)
+            session.flush()
+    except IntegrityError as exc:
+        if not is_cart_user_collision(exc):
+            raise
+        # Savepoint rolled back automatically. Re-select the winning cart row with FOR UPDATE.
+        cart = session.scalar(
+            select(Cart)
+            .where(Cart.user_id == user_id)
+            .options(selectinload(Cart.items).selectinload(CartItem.product))
+            .with_for_update()
+        )
+        if cart is None:
+            raise exc
+    else:
+        session.expire(cart, ["items"])
+        cart = (
+            session.scalar(
+                select(Cart)
+                .where(Cart.id == cart.id)
+                .options(selectinload(Cart.items).selectinload(CartItem.product))
+                .with_for_update()
+            )
+            or cart
+        )
+
+    return cart
+
+
 def get_or_create_cart(
     session: Session,
     user_id: UUID,
@@ -41,7 +104,9 @@ def get_or_create_cart(
             cart = Cart(user_id=user_id)
             session.add(cart)
             session.flush()
-    except IntegrityError:
+    except IntegrityError as exc:
+        if not is_cart_user_collision(exc):
+            raise
         # The begin_nested context manager rolled back to the savepoint.
         # The caller's outer transaction remains intact and healthy.
         cart = session.scalar(
@@ -50,7 +115,7 @@ def get_or_create_cart(
             .options(selectinload(Cart.items).selectinload(CartItem.product))
         )
         if cart is None:
-            raise
+            raise exc
     else:
         session.expire(cart, ["items"])
         cart = (
@@ -96,7 +161,9 @@ def add_to_cart(
 ) -> Cart:
     """Add a product to the cart or increase its quantity if already present.
 
-    Concurrency & Inventory Strategy:
+    Locking & Concurrency Strategy:
+    - Acquires parent Cart lock (with_for_update) FIRST to serialize with concurrent checkouts
+      or other mutations for this user.
     - Preliminary check ensures product exists, is active, and has available inventory.
     - Existing items are locked with row-level locking (with_for_update) to serialize
       concurrent additions and prevent lost updates.
@@ -113,6 +180,10 @@ def add_to_cart(
             detail="Quantity must be greater than zero.",
         )
 
+    # 1. Acquire parent Cart lock first
+    cart = get_or_create_cart_for_update(session, user_id)
+
+    # 2. Inspect target product
     product = session.get(
         Product,
         product_id,
@@ -139,9 +210,7 @@ def add_to_cart(
             detail="Product is out of stock.",
         )
 
-    cart = get_or_create_cart(session, user_id, auto_commit=False)
-
-    # Lock existing cart item with with_for_update to serialize concurrent updates
+    # 3. Lock existing cart item with with_for_update to serialize concurrent updates
     existing_item = session.scalar(
         select(CartItem)
         .where(
@@ -223,9 +292,10 @@ def update_cart_item_quantity(
     """Update the quantity of an existing cart item owned by user.
 
     Validates:
+    - Parent Cart row is locked first (with_for_update).
     - Quantity must be positive integer.
     - Item must belong to the user's cart.
-    - Uses with_for_update row-level locking.
+    - Uses with_for_update row-level locking on CartItem.
     - Product must still be active.
     - Quantity cannot exceed available inventory.
     """
@@ -235,8 +305,10 @@ def update_cart_item_quantity(
             detail="Quantity must be greater than zero.",
         )
 
-    cart = get_or_create_cart(session, user_id, auto_commit=False)
+    # 1. Lock parent cart row
+    cart = get_or_create_cart_for_update(session, user_id)
 
+    # 2. Lock item
     item = session.scalar(
         select(CartItem)
         .where(CartItem.id == item_id, CartItem.cart_id == cart.id)
@@ -291,18 +363,15 @@ def remove_cart_item(
     auto_commit: bool = False,
 ) -> None:
     """Remove a single cart item from the authenticated user's cart."""
-    cart = session.scalar(select(Cart).where(Cart.user_id == user_id))
-    if cart is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Cart item not found.",
-        )
+    # 1. Lock parent cart row
+    cart = get_or_create_cart_for_update(session, user_id)
 
     item = session.scalar(
         select(CartItem).where(
             CartItem.id == item_id,
             CartItem.cart_id == cart.id,
         )
+        .with_for_update()
     )
     if item is None:
         raise HTTPException(
@@ -326,7 +395,8 @@ def clear_cart(
     auto_commit: bool = False,
 ) -> Cart:
     """Remove all items from the authenticated user's cart."""
-    cart = get_or_create_cart(session, user_id, auto_commit=False)
+    # 1. Lock parent cart row
+    cart = get_or_create_cart_for_update(session, user_id)
     session.execute(delete(CartItem).where(CartItem.cart_id == cart.id))
     session.flush()
 

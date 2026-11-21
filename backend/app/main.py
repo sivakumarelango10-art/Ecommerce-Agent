@@ -11,14 +11,17 @@ from sqlalchemy.exc import SQLAlchemyError
 from backend.app.api.routes.auth import router as auth_router
 from backend.app.api.routes.cart import router as cart_router
 from backend.app.api.routes.catalog import router as catalog_router
+from backend.app.api.routes.checkout import router as checkout_router
 from backend.app.api.routes.customers import router as customers_router
 from backend.app.api.routes.health import router as health_router
+from backend.app.api.routes.orders import router as orders_router
 from backend.app.api.routes.questions import router as questions_router
 from backend.app.api.routes.shopping import router as shopping_router
 from backend.app.core.config import Settings, load_settings
 from backend.app.core.logging import configure_logging
 from backend.app.db.session import create_database_engine, create_session_factory
 from backend.app.services.gemini_service import GeminiService
+from backend.app.services.shipping_tax_policy import PolicyConfigurationError
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +72,21 @@ def create_app(
     application.include_router(customers_router, prefix="/api/v1")
     application.include_router(catalog_router, prefix="/api/v1")
     application.include_router(cart_router, prefix="/api/v1")
+    application.include_router(checkout_router, prefix="/api/v1")
+    application.include_router(orders_router, prefix="/api/v1")
     application.include_router(questions_router, prefix="/api/v1")
     application.include_router(shopping_router, prefix="/api/v1")
+
+    @application.exception_handler(PolicyConfigurationError)
+    async def policy_configuration_error_handler(_request, exc: PolicyConfigurationError) -> JSONResponse:
+        logger.error(
+            "Store policy configuration error",
+            extra={"event": "policy_config_missing", "error_type": type(exc).__name__},
+        )
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Checkout service is temporarily unavailable due to unconfigured store policies."},
+        )
 
     @application.exception_handler(SQLAlchemyError)
     async def database_error_handler(_request, exc: SQLAlchemyError) -> JSONResponse:
