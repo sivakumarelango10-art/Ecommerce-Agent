@@ -35,6 +35,8 @@ def test_database_migration_upgrades_and_downgrades_sqlite(
             "cart_items",
             "orders",
             "order_items",
+            "guest_order_verifications",
+            "guest_access_sessions",
             "alembic_version",
         }.issubset(set(inspector.get_table_names()))
         assert "password_hash" in {
@@ -80,9 +82,10 @@ def test_database_migration_upgrades_and_downgrades_sqlite(
         assert "ix_orders_order_number" in order_indexes
         assert "ix_orders_user_created" in order_indexes
 
-        # Verify revision 0004 request_fingerprint column
+        # Verify revision 0004 request_fingerprint and 0005 customer_email_snapshot columns
         orders_columns = {col["name"]: col for col in inspector.get_columns("orders")}
         assert "request_fingerprint" in orders_columns
+        assert "customer_email_snapshot" in orders_columns
     finally:
         engine.dispose()
 
@@ -198,4 +201,88 @@ def test_migration_0004_fingerprint_backfill_and_constraints(
     verify_inspector = inspect(engine)
     cols = {c["name"] for c in verify_inspector.get_columns("orders")}
     assert "request_fingerprint" not in cols
+    engine.dispose()
+
+
+def test_migration_0005_revision_metadata() -> None:
+    import importlib.util
+
+    path = ROOT / "backend" / "alembic" / "versions" / "0005_guest_order_verification.py"
+    spec = importlib.util.spec_from_file_location("phase_5_revision_0005", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.revision == "0005_guest_order_verification"
+    assert len(module.revision) <= 32
+    assert module.down_revision == "0004_order_fingerprint"
+
+
+def test_migration_0005_email_snapshot_backfill_and_tables(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from uuid import uuid4
+
+    database_path = (tmp_path / "migration-0005-test.sqlite").as_posix()
+    database_url = f"sqlite+pysqlite:///{database_path}"
+    monkeypatch.setenv("DATABASE_URL", database_url)
+
+    config = Config(str(ROOT / "alembic.ini"))
+    # 1. Upgrade to revision 0004
+    command.upgrade(config, "0004_order_fingerprint")
+
+    engine = create_engine(database_url)
+    user_id = uuid4()
+    order_id = uuid4()
+    user_email = "historical_user@example.com"
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO users (id, email, password_hash, is_active) "
+                "VALUES (:id, :email, 'hash', 1)"
+            ),
+            {"id": user_id.hex, "email": user_email},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO orders (id, order_number, user_id, shipping_recipient_name, "
+                "shipping_line1, shipping_city, shipping_region, shipping_postal_code, "
+                "subtotal, shipping_fee, tax, total_amount) "
+                "VALUES (:id, 'ORD-LEGACY-05', :user_id, 'Recipient', 'Line 1', "
+                "'City', 'Region', '560001', 100.0, 0.0, 0.0, 100.0)"
+            ),
+            {"id": order_id.hex, "user_id": user_id.hex},
+        )
+
+    # 2. Upgrade to head (0005_guest_order_verification)
+    command.upgrade(config, "head")
+
+    # 3. Verify backfilled customer_email_snapshot
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT customer_email_snapshot FROM orders WHERE id = :id"),
+            {"id": order_id.hex},
+        ).fetchone()
+        assert row is not None
+        assert row[0] == user_email
+
+    # 4. Verify guest verification, session, and outbox tables exist
+    inspector = inspect(engine)
+    tables = inspector.get_table_names()
+    assert "guest_order_verifications" in tables
+    assert "guest_access_sessions" in tables
+    assert "guest_email_outbox" in tables
+    verif_cols = {c["name"] for c in inspector.get_columns("guest_order_verifications")}
+    assert "delivery_failed" in verif_cols
+
+    # 5. Verify downgrade to 0004 drops tables and drops customer_email_snapshot
+    command.downgrade(config, "0004_order_fingerprint")
+    downgrade_inspector = inspect(engine)
+    downgrade_tables = downgrade_inspector.get_table_names()
+    assert "guest_email_outbox" not in downgrade_tables
+    assert "guest_order_verifications" not in downgrade_tables
+    assert "guest_access_sessions" not in downgrade_tables
+
+    cols = {c["name"] for c in downgrade_inspector.get_columns("orders")}
+    assert "customer_email_snapshot" not in cols
     engine.dispose()

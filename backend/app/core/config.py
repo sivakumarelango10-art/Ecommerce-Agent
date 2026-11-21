@@ -44,6 +44,50 @@ class Settings(BaseSettings):
         default=DEFAULT_CATALOGUE_CURRENCY,
         validation_alias="CATALOGUE_CURRENCY",
     )
+    environment: str = Field(
+        default="development",
+        validation_alias="ENVIRONMENT",
+    )
+    otp_hash_secret: SecretStr | None = Field(
+        default=None,
+        validation_alias="OTP_HASH_SECRET",
+    )
+    smtp_host: str | None = Field(
+        default=None,
+        validation_alias="SMTP_HOST",
+    )
+    smtp_port: int = Field(
+        default=587,
+        ge=1,
+        le=65535,
+        validation_alias="SMTP_PORT",
+    )
+    smtp_username: SecretStr | None = Field(
+        default=None,
+        validation_alias="SMTP_USERNAME",
+    )
+    smtp_password: SecretStr | None = Field(
+        default=None,
+        validation_alias="SMTP_PASSWORD",
+    )
+    smtp_from_email: str | None = Field(
+        default=None,
+        validation_alias="SMTP_FROM_EMAIL",
+    )
+    smtp_use_tls: bool = Field(
+        default=True,
+        validation_alias="SMTP_USE_TLS",
+    )
+    smtp_use_ssl: bool = Field(
+        default=False,
+        validation_alias="SMTP_USE_SSL",
+    )
+    guest_token_expire_minutes: int = Field(
+        default=15,
+        gt=0,
+        le=1440,
+        validation_alias="GUEST_TOKEN_EXPIRE_MINUTES",
+    )
 
     @field_validator("gemini_api_key")
     @classmethod
@@ -91,6 +135,19 @@ class Settings(BaseSettings):
                 f"CATALOGUE_CURRENCY must be a valid 3-letter ISO 4217 currency code (e.g. USD, INR, EUR), got '{value}'"
             )
         return clean
+
+    @field_validator("otp_hash_secret")
+    @classmethod
+    def otp_hash_secret_must_be_adequate(
+        cls, value: SecretStr | None
+    ) -> SecretStr | None:
+        if value is not None:
+            raw = value.get_secret_value().strip()
+            if not raw:
+                raise ValueError("OTP_HASH_SECRET must not be blank if provided")
+            if len(raw.encode("utf-8")) < 16:
+                raise ValueError("OTP_HASH_SECRET must be at least 16 bytes")
+        return value
 
 
 def load_settings(*, env_file: str | None = ".env") -> Settings:

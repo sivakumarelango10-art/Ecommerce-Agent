@@ -353,6 +353,9 @@ class Order(TimestampMixin, Base):
         Numeric(12, 2), nullable=False, default=Decimal("0.00"), server_default=text("0.00")
     )
     total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    customer_email_snapshot: Mapped[str] = mapped_column(
+        String(320), nullable=False, default="", server_default=text("''")
+    )
     idempotency_key: Mapped[str | None] = mapped_column(String(128))
     request_fingerprint: Mapped[str | None] = mapped_column(String(64))
 
@@ -362,6 +365,21 @@ class Order(TimestampMixin, Base):
         back_populates="order",
         cascade="all, delete-orphan",
         order_by="OrderItem.created_at",
+    )
+    verifications: Mapped[list["GuestOrderVerification"]] = relationship(
+        back_populates="order",
+        cascade="all, delete-orphan",
+        order_by="GuestOrderVerification.created_at.desc()",
+    )
+    guest_sessions: Mapped[list["GuestAccessSession"]] = relationship(
+        back_populates="order",
+        cascade="all, delete-orphan",
+        order_by="GuestAccessSession.created_at.desc()",
+    )
+    outbox_messages: Mapped[list["GuestEmailOutbox"]] = relationship(
+        back_populates="order",
+        cascade="all, delete-orphan",
+        order_by="GuestEmailOutbox.created_at.asc()",
     )
 
 
@@ -400,3 +418,170 @@ class OrderItem(TimestampMixin, Base):
 
     order: Mapped[Order] = relationship(back_populates="items")
     product: Mapped[Product | None] = relationship()
+
+
+class GuestOrderVerification(Base):
+    __tablename__ = "guest_order_verifications"
+    __table_args__ = (
+        CheckConstraint(
+            "attempt_count >= 0",
+            name="ck_guest_verifications_attempt_count_nonnegative",
+        ),
+        CheckConstraint(
+            "resend_count >= 0",
+            name="ck_guest_verifications_resend_count_nonnegative",
+        ),
+        Index("ix_guest_verifications_order_created", "order_id", "created_at"),
+        Index("ix_guest_verifications_email_created", "email_snapshot", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid4
+    )
+    order_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("orders.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    email_snapshot: Mapped[str] = mapped_column(String(320), nullable=False)
+    otp_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    resend_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    consumed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    delivery_failed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    order: Mapped[Order] = relationship(back_populates="verifications")
+    outbox_messages: Mapped[list["GuestEmailOutbox"]] = relationship(
+        back_populates="verification",
+        cascade="all, delete-orphan",
+    )
+
+
+class GuestAccessSession(Base):
+    __tablename__ = "guest_access_sessions"
+    __table_args__ = (
+        Index("uq_guest_access_sessions_jti_hash", "token_jti_hash", unique=True),
+        Index("ix_guest_access_sessions_order_expires", "order_id", "expires_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid4
+    )
+    order_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("orders.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    token_jti_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    order: Mapped[Order] = relationship(back_populates="guest_sessions")
+
+
+class OutboxDeliveryStatus(str, Enum):
+    PENDING = "pending"
+    RETRY = "retry"
+    SENT = "sent"
+    FAILED = "failed"
+
+
+class GuestEmailOutbox(Base):
+    __tablename__ = "guest_email_outbox"
+    __table_args__ = (
+        CheckConstraint(
+            "attempts >= 0",
+            name="ck_guest_email_outbox_attempts_nonnegative",
+        ),
+        CheckConstraint(
+            "max_attempts > 0",
+            name="ck_guest_email_outbox_max_attempts_positive",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'retry', 'sent', 'failed')",
+            name="ck_guest_email_outbox_status_valid",
+        ),
+        Index("ix_guest_email_outbox_status_retry", "status", "next_retry_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid4
+    )
+    order_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("orders.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    verification_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("guest_order_verifications.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    recipient_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    order_number: Mapped[str] = mapped_column(String(64), nullable=False)
+    encrypted_otp_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default=OutboxDeliveryStatus.PENDING.value,
+        server_default=text("'pending'"),
+    )
+    attempts: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    max_attempts: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=3,
+        server_default=text("3"),
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    next_retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    order: Mapped[Order] = relationship(back_populates="outbox_messages")
+    verification: Mapped[GuestOrderVerification] = relationship(back_populates="outbox_messages")

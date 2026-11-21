@@ -20,6 +20,7 @@ from backend.app.db.models import (
     OrderItem,
     OrderStatus,
     Product,
+    User,
 )
 from backend.app.schemas.order import (
     CheckoutItemAcknowledgement,
@@ -288,12 +289,15 @@ def process_checkout(
     )
 
     # 12. Create Order record with collision retry for ix_orders_order_number
+    user = session.get(User, user_id)
+    customer_email = user.email if user else ""
     order: Order | None = None
     for attempt in range(1, MAX_ORDER_NUMBER_RETRIES + 1):
         candidate_order_number = generate_order_number()
         candidate_order = Order(
             order_number=candidate_order_number,
             user_id=user_id,
+            customer_email_snapshot=customer_email,
             shipping_address_id=address.id,
             shipping_recipient_name=address.recipient_name,
             shipping_line1=address.line1,

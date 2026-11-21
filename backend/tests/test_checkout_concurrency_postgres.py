@@ -814,7 +814,7 @@ def test_postgres_migration_0003_to_0004_roundtrip(monkeypatch):
 
     # 0. Stamp current head to ensure alembic_version table is initialized
     try:
-        command.stamp(config, "0004_order_fingerprint")
+        command.stamp(config, "head")
     except Exception:
         pass
 
@@ -906,8 +906,12 @@ def test_postgres_migration_0003_to_0004_roundtrip(monkeypatch):
         orders_cols3 = {c["name"] for c in insp3.get_columns("orders")}
         assert "request_fingerprint" not in orders_cols3
 
-        # 5. Re-upgrade to head (0004_order_fingerprint) so database is ready for all operations
+        # 5. Re-upgrade to head so database is ready for all operations
         command.upgrade(config, "head")
 
     finally:
+        try:
+            command.upgrade(config, "head")
+        except Exception:
+            pass
         engine.dispose()

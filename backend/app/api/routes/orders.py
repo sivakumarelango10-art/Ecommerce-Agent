@@ -1,17 +1,41 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
-from backend.app.api.auth_dependencies import get_current_user
-from backend.app.db.models import User
+from backend.app.api.auth_dependencies import (
+    get_current_user,
+    get_verified_guest_order,
+)
+from backend.app.db.models import Order, User
 from backend.app.db.session import get_db_session
+from backend.app.schemas.guest_order import (
+    GenericVerificationResponse,
+    GuestOrderResponse,
+    GuestTokenResponse,
+    GuestVerificationRequest,
+    GuestVerifyOTPRequest,
+)
 from backend.app.schemas.order import (
     OrderItemResponse,
     OrderResponse,
     OrderSummaryResponse,
 )
+from backend.app.services.email_service import (
+    EmailConfigurationError,
+    EmailDeliveryError,
+)
+from backend.app.services.guest_verification_service import (
+    ExpiredOTPError,
+    InvalidOTPError,
+    MissingSecretError,
+    OTPAttemptsExceededError,
+    RateLimitExceededError,
+    request_guest_verification,
+    verify_guest_otp,
+)
 from backend.app.services.order_service import (
+    format_guest_order_response,
     format_order_response,
     format_order_summary_response,
     get_customer_order,
@@ -19,6 +43,97 @@ from backend.app.services.order_service import (
 )
 
 router = APIRouter(prefix="/orders", tags=["orders"])
+
+
+@router.post(
+    "/guest/request-verification",
+    response_model=GenericVerificationResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Initiate guest order verification by sending a one-time passcode",
+)
+def request_guest_verification_endpoint(
+    body: GuestVerificationRequest,
+    request: Request,
+    session: Session = Depends(get_db_session),
+) -> GenericVerificationResponse:
+    settings = request.app.state.settings
+    try:
+        request_guest_verification(session, body.order_number, body.email, settings)
+    except RateLimitExceededError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(exc),
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
+    except (EmailConfigurationError, EmailDeliveryError):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Email delivery service is currently unavailable.",
+        ) from None
+    except MissingSecretError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Verification service is currently unavailable.",
+        ) from None
+    return GenericVerificationResponse()
+
+
+@router.post(
+    "/guest/verify",
+    response_model=GuestTokenResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Verify guest OTP and receive a restricted guest access token",
+)
+def verify_guest_otp_endpoint(
+    body: GuestVerifyOTPRequest,
+    request: Request,
+    session: Session = Depends(get_db_session),
+) -> GuestTokenResponse:
+    settings = request.app.state.settings
+    try:
+        order, token, expires_in = verify_guest_otp(
+            session, body.order_number, body.email, body.otp, settings
+        )
+        return GuestTokenResponse(
+            access_token=token,
+            token_type="Bearer",
+            expires_in=expires_in,
+            order_number=order.order_number,
+        )
+    except (InvalidOTPError, ExpiredOTPError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except OTPAttemptsExceededError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except MissingSecretError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Verification service is currently unavailable.",
+        ) from None
+
+
+@router.get(
+    "/guest/{order_number}",
+    response_model=GuestOrderResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Retrieve full details of verified order using restricted guest token",
+)
+def get_guest_order_endpoint(
+    order_number: str,
+    order: Order = Depends(get_verified_guest_order),
+) -> GuestOrderResponse:
+    if order.order_number.upper() != order_number.strip().upper():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Guest access token is not authorized for this order number.",
+        )
+    return format_guest_order_response(order)
+
 
 
 @router.get(

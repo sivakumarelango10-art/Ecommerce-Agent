@@ -4,6 +4,10 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.app.db.models import Order
+from backend.app.schemas.guest_order import (
+    GuestOrderItemResponse,
+    GuestOrderResponse,
+)
 from backend.app.schemas.order import (
     CustomerOrderDetailSummary,
     CustomerOrderItemSummary,
@@ -208,4 +212,39 @@ def format_order_summary_response(order: Order) -> OrderSummaryResponse:
         total_amount=order.total_amount,
         item_count=len(order.items),
         created_at=order.created_at,
+    )
+
+
+def format_guest_order_response(order: Order) -> GuestOrderResponse:
+    """Format an Order ORM instance into the restricted GuestOrderResponse schema."""
+    shipping_snapshot = ShippingAddressSnapshotResponse(
+        recipient_name=order.shipping_recipient_name,
+        line1=order.shipping_line1,
+        line2=order.shipping_line2,
+        city=order.shipping_city,
+        region=order.shipping_region,
+        postal_code=order.shipping_postal_code,
+        country_code=order.shipping_country_code,
+    )
+    items = [
+        GuestOrderItemResponse(
+            product_sku=item.product_sku,
+            product_name=item.product_name,
+            quantity=item.quantity,
+            unit_price=item.unit_price,
+            line_total=item.line_total,
+        )
+        for item in order.items
+    ]
+    return GuestOrderResponse(
+        order_number=order.order_number,
+        created_at=order.created_at,
+        status=order.status,
+        currency=order.currency,
+        subtotal=order.subtotal,
+        shipping_fee=order.shipping_fee,
+        tax=order.tax,
+        total_amount=order.total_amount,
+        shipping_snapshot=shipping_snapshot,
+        items=items,
     )
