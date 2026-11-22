@@ -1,0 +1,42 @@
+import React from 'react';
+import { cn } from './Button';
+
+export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+  label?: string;
+  error?: string;
+  helperText?: string;
+}
+
+export const Input = React.forwardRef<HTMLInputElement, InputProps>(
+  ({ className, label, error, helperText, id, ...props }, ref) => {
+    const inputId = id || props.name || Math.random().toString(36).substring(2, 9);
+
+    return (
+      <div className="w-full">
+        {label && (
+          <label htmlFor={inputId} className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1.5">
+            {label}
+          </label>
+        )}
+        <input
+          id={inputId}
+          ref={ref}
+          className={cn(
+            'w-full px-3.5 py-2 text-sm bg-white border rounded-lg text-slate-900 placeholder-slate-400',
+            'transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-offset-0',
+            error
+              ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-200'
+              : 'border-slate-300 focus:border-emerald-500 focus:ring-emerald-200',
+            'disabled:bg-slate-50 disabled:text-slate-400 disabled:border-slate-200',
+            className
+          )}
+          {...props}
+        />
+        {error && <p className="mt-1 text-xs text-rose-600">{error}</p>}
+        {helperText && !error && <p className="mt-1 text-xs text-slate-500">{helperText}</p>}
+      </div>
+    );
+  }
+);
+
+Input.displayName = 'Input';
