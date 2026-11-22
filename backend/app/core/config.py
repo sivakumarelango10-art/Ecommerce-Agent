@@ -88,6 +88,25 @@ class Settings(BaseSettings):
         le=1440,
         validation_alias="GUEST_TOKEN_EXPIRE_MINUTES",
     )
+    outbox_worker_enabled: bool = Field(
+        default=True,
+        validation_alias="OUTBOX_WORKER_ENABLED",
+    )
+    outbox_poll_interval_seconds: float = Field(
+        default=2.0,
+        gt=0,
+        validation_alias="OUTBOX_POLL_INTERVAL_SECONDS",
+    )
+    outbox_lease_seconds: int = Field(
+        default=60,
+        gt=0,
+        validation_alias="OUTBOX_LEASE_SECONDS",
+    )
+    outbox_batch_size: int = Field(
+        default=10,
+        gt=0,
+        validation_alias="OUTBOX_BATCH_SIZE",
+    )
 
     @field_validator("gemini_api_key")
     @classmethod

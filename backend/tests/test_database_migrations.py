@@ -82,10 +82,12 @@ def test_database_migration_upgrades_and_downgrades_sqlite(
         assert "ix_orders_order_number" in order_indexes
         assert "ix_orders_user_created" in order_indexes
 
-        # Verify revision 0004 request_fingerprint and 0005 customer_email_snapshot columns
+        # Verify revision 0004 request_fingerprint, 0005 customer_email_snapshot, and 0006 lease_token columns
         orders_columns = {col["name"]: col for col in inspector.get_columns("orders")}
         assert "request_fingerprint" in orders_columns
         assert "customer_email_snapshot" in orders_columns
+        outbox_columns = {col["name"]: col for col in inspector.get_columns("guest_email_outbox")}
+        assert "lease_token" in outbox_columns
     finally:
         engine.dispose()
 
@@ -285,4 +287,46 @@ def test_migration_0005_email_snapshot_backfill_and_tables(
 
     cols = {c["name"] for c in downgrade_inspector.get_columns("orders")}
     assert "customer_email_snapshot" not in cols
+    engine.dispose()
+
+
+def test_migration_0006_revision_metadata() -> None:
+    import importlib.util
+
+    path = ROOT / "backend" / "alembic" / "versions" / "0006_outbox_lease_token.py"
+    spec = importlib.util.spec_from_file_location("phase_5_revision_0006", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.revision == "0006_outbox_lease_token"
+    assert len(module.revision) <= 32
+    assert module.down_revision == "0005_guest_order_verification"
+
+
+def test_migration_0006_lease_token_column_and_downgrade(
+    tmp_path: Path, monkeypatch
+) -> None:
+    database_path = (tmp_path / "migration-0006-test.sqlite").as_posix()
+    database_url = f"sqlite+pysqlite:///{database_path}"
+    monkeypatch.setenv("DATABASE_URL", database_url)
+
+    config = Config(str(ROOT / "alembic.ini"))
+    # Upgrade to 0005
+    command.upgrade(config, "0005_guest_order_verification")
+    engine = create_engine(database_url)
+    inspector_0005 = inspect(engine)
+    cols_0005 = {c["name"] for c in inspector_0005.get_columns("guest_email_outbox")}
+    assert "lease_token" not in cols_0005
+
+    # Upgrade to 0006 (head)
+    command.upgrade(config, "head")
+    inspector_0006 = inspect(engine)
+    cols_0006 = {c["name"] for c in inspector_0006.get_columns("guest_email_outbox")}
+    assert "lease_token" in cols_0006
+
+    # Downgrade back to 0005
+    command.downgrade(config, "0005_guest_order_verification")
+    inspector_down = inspect(engine)
+    cols_down = {c["name"] for c in inspector_down.get_columns("guest_email_outbox")}
+    assert "lease_token" not in cols_down
     engine.dispose()

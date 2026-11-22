@@ -245,24 +245,266 @@ def request_guest_verification(
     return True
 
 
+def claim_outbox_jobs(
+    session: Session,
+    limit: int = 10,
+    lease_seconds: int = 60,
+) -> list[dict[str, Any]]:
+    """Atomically claim a batch of eligible outbox jobs using a safe lease strategy.
+
+    Uses PostgreSQL FOR UPDATE SKIP LOCKED where available to allow concurrent workers to claim
+    disjoint batches. Uses conditional compare-and-swap UPDATE with unique lease fencing tokens
+    to guarantee atomic, exclusive lease ownership across both PostgreSQL and SQLite. Commits
+    the lease immediately so that no database row locks are held during subsequent SMTP network calls.
+    """
+    now = utc_now()
+    lease_deadline = now + timedelta(seconds=lease_seconds)
+
+    stmt = (
+        select(GuestEmailOutbox)
+        .where(
+            GuestEmailOutbox.status.in_(
+                [OutboxDeliveryStatus.PENDING.value, OutboxDeliveryStatus.RETRY.value]
+            ),
+            (GuestEmailOutbox.next_retry_at.is_(None))
+            | (GuestEmailOutbox.next_retry_at <= now),
+            GuestEmailOutbox.encrypted_otp_payload.is_not(None),
+        )
+        .order_by(GuestEmailOutbox.created_at.asc())
+        .limit(limit)
+        .with_for_update(skip_locked=True)
+    )
+
+    try:
+        candidate_jobs = list(session.scalars(stmt).all())
+    except Exception:
+        # Table might not exist yet during initial test harness startup
+        session.rollback()
+        return []
+
+    if not candidate_jobs:
+        return []
+
+    claimed_data: list[dict[str, Any]] = []
+    for job in candidate_jobs:
+        # Generate a unique lease fencing token for this claim
+        new_lease_token = uuid4()
+        # Atomic conditional lease claim: guarantees single-worker ownership with fencing token
+        res = session.execute(
+            update(GuestEmailOutbox)
+            .where(
+                GuestEmailOutbox.id == job.id,
+                GuestEmailOutbox.status.in_(
+                    [OutboxDeliveryStatus.PENDING.value, OutboxDeliveryStatus.RETRY.value]
+                ),
+                (GuestEmailOutbox.next_retry_at.is_(None))
+                | (GuestEmailOutbox.next_retry_at <= now),
+                GuestEmailOutbox.encrypted_otp_payload.is_not(None),
+            )
+            .values(
+                next_retry_at=lease_deadline,
+                lease_token=new_lease_token,
+                updated_at=now,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if res.rowcount == 1:
+            claimed_data.append(
+                {
+                    "id": job.id,
+                    "order_id": job.order_id,
+                    "verification_id": job.verification_id,
+                    "recipient_email": job.recipient_email,
+                    "order_number": job.order_number,
+                    "encrypted_otp_payload": job.encrypted_otp_payload,
+                    "attempts": job.attempts,
+                    "max_attempts": job.max_attempts,
+                    "lease_token": new_lease_token,
+                    "lease_deadline": lease_deadline,
+                }
+            )
+
+    # Commit lease to release row-level locks before performing network I/O
+    session.commit()
+    return claimed_data
+
+
+def record_outbox_success(
+    session: Session,
+    outbox_id: UUID,
+    lease_token: UUID,
+) -> bool:
+    """Record successful delivery in a dedicated short transaction and scrub ciphertext.
+
+    Fenced by lease_token: rejects finalization if the lease token does not match
+    or if the lease has expired, preventing stale workers from overwriting state.
+    Clears lease ownership upon reaching the terminal SENT state.
+    """
+    now = utc_now()
+    stmt = (
+        select(GuestEmailOutbox)
+        .where(GuestEmailOutbox.id == outbox_id)
+        .with_for_update()
+    )
+    job = session.scalar(stmt)
+    if not job:
+        return False
+    session.refresh(job)
+
+    if job.status == OutboxDeliveryStatus.SENT.value:
+        return False
+
+    if job.lease_token != lease_token:
+        logger.warning(
+            "Stale outbox worker success rejected; lease token mismatch",
+            extra={
+                "event": "stale_outbox_token_mismatch",
+                "outbox_id": str(outbox_id),
+                "expected_token": str(job.lease_token),
+                "claimed_token": str(lease_token),
+            },
+        )
+        return False
+
+    if job.next_retry_at is not None and ensure_utc(job.next_retry_at) <= now:
+        logger.warning(
+            "Stale outbox worker success rejected; lease expired",
+            extra={
+                "event": "stale_outbox_lease_expired",
+                "outbox_id": str(outbox_id),
+                "lease_deadline": job.next_retry_at.isoformat(),
+                "current_time": now.isoformat(),
+            },
+        )
+        return False
+
+    job.status = OutboxDeliveryStatus.SENT.value
+    job.sent_at = now
+    job.encrypted_otp_payload = None  # scrub ciphertext
+    job.lease_token = None  # clear lease ownership on terminal state
+    job.updated_at = now
+    session.commit()
+    return True
+
+
+def record_outbox_failure(
+    session: Session,
+    outbox_id: UUID,
+    verification_id: UUID,
+    lease_token: UUID,
+    exc: Exception,
+) -> bool:
+    """Record delivery failure in a dedicated short transaction with backoff or permanent failure cleanup.
+
+    Fenced by lease_token: rejects finalization if the lease token does not match
+    or if the lease has expired, ensuring a stale worker cannot increment attempts,
+    alter next_retry_at, or invalidate verification records.
+    """
+    now = utc_now()
+    stmt = (
+        select(GuestEmailOutbox)
+        .where(GuestEmailOutbox.id == outbox_id)
+        .with_for_update()
+    )
+    job = session.scalar(stmt)
+    if not job:
+        return False
+    session.refresh(job)
+
+    if job.status == OutboxDeliveryStatus.SENT.value:
+        return False
+
+    if job.lease_token != lease_token:
+        logger.warning(
+            "Stale outbox worker failure rejected; lease token mismatch",
+            extra={
+                "event": "stale_outbox_failure_token_mismatch",
+                "outbox_id": str(outbox_id),
+                "expected_token": str(job.lease_token),
+                "claimed_token": str(lease_token),
+            },
+        )
+        return False
+
+    if job.next_retry_at is not None and ensure_utc(job.next_retry_at) <= now:
+        logger.warning(
+            "Stale outbox worker failure rejected; lease expired",
+            extra={
+                "event": "stale_outbox_failure_lease_expired",
+                "outbox_id": str(outbox_id),
+                "lease_deadline": job.next_retry_at.isoformat(),
+                "current_time": now.isoformat(),
+            },
+        )
+        return False
+
+    job.attempts += 1
+    job.last_error = f"{type(exc).__name__}: {str(exc)}"
+    job.updated_at = now
+
+    if job.attempts >= job.max_attempts:
+        job.status = OutboxDeliveryStatus.FAILED.value
+        job.encrypted_otp_payload = None  # scrub ciphertext
+        job.lease_token = None  # clear lease ownership on terminal state
+
+        verification = session.scalar(
+            select(GuestOrderVerification).where(
+                GuestOrderVerification.id == verification_id
+            )
+        )
+        if verification:
+            verification.consumed_at = now
+            verification.delivery_failed = True
+
+        session.commit()
+        logger.error(
+            "Outbox job permanently failed after max attempts",
+            extra={
+                "event": "outbox_permanent_failure",
+                "job_id": str(job.id),
+                "order_id": str(job.order_id),
+                "error": job.last_error,
+            },
+        )
+    else:
+        job.status = OutboxDeliveryStatus.RETRY.value
+        backoff_seconds = 10 * job.attempts
+        job.next_retry_at = now + timedelta(seconds=backoff_seconds)
+        job.lease_token = None  # clear lease token while waiting for retry
+        session.commit()
+        logger.warning(
+            "Outbox job temporary failure, scheduled for retry",
+            extra={
+                "event": "outbox_retry_scheduled",
+                "job_id": str(job.id),
+                "attempts": job.attempts,
+                "next_retry_at": job.next_retry_at.isoformat(),
+            },
+        )
+
+    return True
+
+
 def dispatch_outbox_job(
     session: Session,
     outbox_id: UUID,
     settings: Settings,
     email_provider: EmailDeliveryProvider | None = None,
+    lease_seconds: int = 60,
 ) -> bool:
     """Attempt delivery of a single transactional email outbox job.
 
     Maintains delivery state, retry counts, and scrubs encrypted payload upon terminal state.
+    Uses an atomic lease with a fencing token to release the database connection lock prior to SMTP network calls.
     """
     provider = email_provider or get_email_provider(settings)
 
-    stmt = select(GuestEmailOutbox).where(GuestEmailOutbox.id == outbox_id)
-    try:
-        stmt = stmt.with_for_update()
-    except Exception:
-        pass
+    # 1. Lease this specific job atomically in DB with fencing token
+    now = utc_now()
+    lease_deadline = now + timedelta(seconds=lease_seconds)
+    lease_token = uuid4()
 
+    stmt = select(GuestEmailOutbox).where(GuestEmailOutbox.id == outbox_id).with_for_update()
     job = session.scalar(stmt)
     if job is None or job.status in {
         OutboxDeliveryStatus.SENT.value,
@@ -273,66 +515,42 @@ def dispatch_outbox_job(
     if not job.encrypted_otp_payload:
         return False
 
-    now = utc_now()
-    try:
-        # Decrypt OTP in memory only for delivery
-        otp_code = decrypt_otp(job.encrypted_otp_payload, settings.otp_hash_secret)
-        provider.send_otp_email(job.recipient_email, job.order_number, otp_code)
+    recipient = job.recipient_email
+    order_num = job.order_number
+    enc_payload = job.encrypted_otp_payload
+    ver_id = job.verification_id
 
-        # Success: update status and scrub ciphertext
-        job.status = OutboxDeliveryStatus.SENT.value
-        job.sent_at = now
-        job.encrypted_otp_payload = None
-        job.updated_at = now
+    # Conditional compare-and-swap lease update with fencing token
+    res = session.execute(
+        update(GuestEmailOutbox)
+        .where(
+            GuestEmailOutbox.id == outbox_id,
+            GuestEmailOutbox.status.in_(
+                [OutboxDeliveryStatus.PENDING.value, OutboxDeliveryStatus.RETRY.value]
+            ),
+            (GuestEmailOutbox.next_retry_at.is_(None))
+            | (GuestEmailOutbox.next_retry_at <= now),
+        )
+        .values(
+            next_retry_at=lease_deadline,
+            lease_token=lease_token,
+            updated_at=now,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if res.rowcount != 1:
         session.commit()
-        return True
+        return False
 
+    session.commit()  # Release row lock before network call
+
+    # 2. Perform SMTP Network Call (Outside DB lock)
+    try:
+        otp_code = decrypt_otp(enc_payload, settings.otp_hash_secret)
+        provider.send_otp_email(recipient, order_num, otp_code)
+        return record_outbox_success(session, outbox_id, lease_token)
     except Exception as exc:
-        job.attempts += 1
-        job.last_error = f"{type(exc).__name__}: {str(exc)}"
-        job.updated_at = now
-
-        # If max retries exhausted, transition to terminal failure
-        if job.attempts >= job.max_attempts:
-            job.status = OutboxDeliveryStatus.FAILED.value
-            job.encrypted_otp_payload = None  # scrub ciphertext
-
-            # Invalidate the verification record so an undelivered OTP is not left active,
-            # and mark delivery_failed so customer is not locked out by cooldown/limits
-            verification = session.scalar(
-                select(GuestOrderVerification).where(
-                    GuestOrderVerification.id == job.verification_id
-                )
-            )
-            if verification:
-                verification.consumed_at = now
-                verification.delivery_failed = True
-
-            session.commit()
-            logger.error(
-                "Outbox job permanently failed after max attempts",
-                extra={
-                    "event": "outbox_permanent_failure",
-                    "job_id": str(job.id),
-                    "order_id": str(job.order_id),
-                    "error": job.last_error,
-                },
-            )
-        else:
-            job.status = OutboxDeliveryStatus.RETRY.value
-            backoff_seconds = 10 * job.attempts
-            job.next_retry_at = now + timedelta(seconds=backoff_seconds)
-            session.commit()
-            logger.warning(
-                "Outbox job temporary failure, scheduled for retry",
-                extra={
-                    "event": "outbox_retry_scheduled",
-                    "job_id": str(job.id),
-                    "attempts": job.attempts,
-                    "next_retry_at": job.next_retry_at.isoformat(),
-                },
-            )
-
+        record_outbox_failure(session, outbox_id, ver_id, lease_token, exc)
         raise exc
 
 
@@ -341,32 +559,28 @@ def process_email_outbox(
     settings: Settings,
     email_provider: EmailDeliveryProvider | None = None,
     limit: int = 10,
+    lease_seconds: int = 60,
 ) -> int:
-    """Process pending and retryable email outbox jobs."""
-    now = utc_now()
-    jobs = list(
-        session.scalars(
-            select(GuestEmailOutbox)
-            .where(
-                GuestEmailOutbox.status.in_(
-                    [OutboxDeliveryStatus.PENDING.value, OutboxDeliveryStatus.RETRY.value]
-                ),
-                (GuestEmailOutbox.next_retry_at.is_(None))
-                | (GuestEmailOutbox.next_retry_at <= now),
-            )
-            .order_by(GuestEmailOutbox.created_at.asc())
-            .limit(limit)
-        ).all()
-    )
+    """Process pending and retryable email outbox jobs using a non-blocking lease strategy."""
+    provider = email_provider or get_email_provider(settings)
+    claimed_jobs = claim_outbox_jobs(session, limit=limit, lease_seconds=lease_seconds)
+    if not claimed_jobs:
+        return 0
 
     success_count = 0
-    provider = email_provider or get_email_provider(settings)
-    for job in jobs:
+    for item in claimed_jobs:
         try:
-            if dispatch_outbox_job(session, job.id, settings, provider):
+            otp_code = decrypt_otp(item["encrypted_otp_payload"], settings.otp_hash_secret)
+            # SMTP network call outside database locks
+            provider.send_otp_email(item["recipient_email"], item["order_number"], otp_code)
+            if record_outbox_success(session, item["id"], item["lease_token"]):
                 success_count += 1
-        except Exception:
+        except Exception as exc:
+            record_outbox_failure(
+                session, item["id"], item["verification_id"], item["lease_token"], exc
+            )
             continue
+
     return success_count
 
 

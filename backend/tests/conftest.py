@@ -41,6 +41,7 @@ def api_client(
     monkeypatch.setenv("GEMINI_MODEL", "test-gemini-model")
     monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///:memory:")
     monkeypatch.setenv("AUTH_SECRET_KEY", "test-auth-secret-key-0123456789abcdef")
+    monkeypatch.setenv("OUTBOX_WORKER_ENABLED", "false")
     fake_client = FakeClient("A mocked Gemini answer.")
 
     def fake_client_factory(**kwargs: object) -> FakeClient:

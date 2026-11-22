@@ -20,7 +20,9 @@ from backend.app.api.routes.shopping import router as shopping_router
 from backend.app.core.config import Settings, load_settings
 from backend.app.core.logging import configure_logging
 from backend.app.db.session import create_database_engine, create_session_factory
+from backend.app.services.email_service import EmailDeliveryProvider
 from backend.app.services.gemini_service import GeminiService
+from backend.app.services.outbox_worker import GuestEmailOutboxWorker
 from backend.app.services.shipping_tax_policy import PolicyConfigurationError
 
 logger = logging.getLogger(__name__)
@@ -39,6 +41,8 @@ def create_app(
     settings_loader: SettingsLoader = load_settings,
     service_factory: ServiceFactory = GeminiService,
     engine_factory: EngineFactory = create_database_engine,
+    email_provider: EmailDeliveryProvider | None = None,
+    outbox_worker_enabled: bool | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -54,9 +58,30 @@ def create_app(
         app.state.db_engine = engine
         app.state.db_session_factory = create_session_factory(engine)
         app.state.gemini_service = service
+
+        worker = None
+        worker_enabled = (
+            outbox_worker_enabled
+            if outbox_worker_enabled is not None
+            else settings.outbox_worker_enabled
+        )
+        if worker_enabled:
+            worker = GuestEmailOutboxWorker(
+                session_factory=app.state.db_session_factory,
+                settings=settings,
+                email_provider=email_provider,
+                poll_interval_seconds=settings.outbox_poll_interval_seconds,
+                batch_size=settings.outbox_batch_size,
+                lease_seconds=settings.outbox_lease_seconds,
+            )
+            app.state.outbox_worker = worker
+            await worker.start()
+
         try:
             yield
         finally:
+            if worker is not None:
+                await worker.stop()
             try:
                 service.close()
             finally:

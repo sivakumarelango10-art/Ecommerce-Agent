@@ -101,6 +101,7 @@ def test_app_env(tmp_path, monkeypatch):
     monkeypatch.setenv("OTP_HASH_SECRET", TEST_OTP_SECRET.get_secret_value())
     monkeypatch.setenv("ENVIRONMENT", "development")
     monkeypatch.setenv("CATALOGUE_CURRENCY", "INR")
+    monkeypatch.setenv("OUTBOX_WORKER_ENABLED", "false")
 
     engine = create_engine(db_url, connect_args={"check_same_thread": False})
 
