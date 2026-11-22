@@ -1,3 +1,5 @@
+import json
+from typing import Any
 from pydantic import Field, SecretStr, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
@@ -107,6 +109,30 @@ class Settings(BaseSettings):
         gt=0,
         validation_alias="OUTBOX_BATCH_SIZE",
     )
+    allowed_origins: list[str] | str = Field(
+        default=[
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        ],
+        validation_alias="ALLOWED_ORIGINS",
+    )
+    auth_rate_limit_login_per_minute: int = Field(
+        default=10,
+        gt=0,
+        validation_alias="AUTH_RATE_LIMIT_LOGIN_PER_MINUTE",
+    )
+    auth_rate_limit_register_per_minute: int = Field(
+        default=5,
+        gt=0,
+        validation_alias="AUTH_RATE_LIMIT_REGISTER_PER_MINUTE",
+    )
+    auth_rate_limit_window_seconds: int = Field(
+        default=60,
+        gt=0,
+        validation_alias="AUTH_RATE_LIMIT_WINDOW_SECONDS",
+    )
 
     @field_validator("gemini_api_key")
     @classmethod
@@ -166,6 +192,33 @@ class Settings(BaseSettings):
                 raise ValueError("OTP_HASH_SECRET must not be blank if provided")
             if len(raw.encode("utf-8")) < 16:
                 raise ValueError("OTP_HASH_SECRET must be at least 16 bytes")
+        return value
+
+    @field_validator("allowed_origins")
+    @classmethod
+    def validate_allowed_origins(cls, value: Any) -> list[str]:
+        if isinstance(value, str):
+            clean = value.strip()
+            if not clean:
+                return []
+            if clean.startswith("[") and clean.endswith("]"):
+                try:
+                    parsed = json.loads(clean)
+                    if isinstance(parsed, list):
+                        value = [str(item).strip() for item in parsed if str(item).strip()]
+                except Exception:
+                    value = [item.strip() for item in clean.split(",") if item.strip()]
+            else:
+                value = [item.strip() for item in clean.split(",") if item.strip()]
+        elif isinstance(value, (list, tuple)):
+            value = [str(item).strip() for item in value if str(item).strip()]
+        else:
+            value = []
+
+        if "*" in value:
+            raise ValueError(
+                "Wildcard origin '*' is not allowed when credentials support is enabled. Specify explicit origins."
+            )
         return value
 
 

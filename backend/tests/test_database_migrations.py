@@ -330,3 +330,44 @@ def test_migration_0006_lease_token_column_and_downgrade(
     cols_down = {c["name"] for c in inspector_down.get_columns("guest_email_outbox")}
     assert "lease_token" not in cols_down
     engine.dispose()
+
+
+def test_migration_0007_revision_metadata() -> None:
+    import importlib.util
+
+    path = ROOT / "backend" / "alembic" / "versions" / "0007_auth_rate_limits.py"
+    spec = importlib.util.spec_from_file_location("phase_5_revision_0007", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.revision == "0007_auth_rate_limits"
+    assert len(module.revision) <= 32
+    assert module.down_revision == "0006_outbox_lease_token"
+
+
+def test_migration_0007_auth_rate_limits_table_and_downgrade(
+    tmp_path: Path, monkeypatch
+) -> None:
+    database_path = (tmp_path / "migration-0007-test.sqlite").as_posix()
+    database_url = f"sqlite+pysqlite:///{database_path}"
+    monkeypatch.setenv("DATABASE_URL", database_url)
+
+    config = Config(str(ROOT / "alembic.ini"))
+    # Upgrade to 0006
+    command.upgrade(config, "0006_outbox_lease_token")
+    engine = create_engine(database_url)
+    inspector_0006 = inspect(engine)
+    assert "auth_rate_limits" not in inspector_0006.get_table_names()
+
+    # Upgrade to 0007 (head)
+    command.upgrade(config, "head")
+    inspector_0007 = inspect(engine)
+    assert "auth_rate_limits" in inspector_0007.get_table_names()
+    cols_0007 = {c["name"] for c in inspector_0007.get_columns("auth_rate_limits")}
+    assert {"id", "key_hash", "action", "created_at", "expires_at"}.issubset(cols_0007)
+
+    # Downgrade back to 0006
+    command.downgrade(config, "0006_outbox_lease_token")
+    inspector_down = inspect(engine)
+    assert "auth_rate_limits" not in inspector_down.get_table_names()
+    engine.dispose()

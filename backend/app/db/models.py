@@ -588,3 +588,20 @@ class GuestEmailOutbox(Base):
 
     order: Mapped[Order] = relationship(back_populates="outbox_messages")
     verification: Mapped[GuestOrderVerification] = relationship(back_populates="outbox_messages")
+
+
+class AuthRateLimit(Base):
+    """Distributed storage for authentication rate limiting across multiple workers."""
+    __tablename__ = "auth_rate_limits"
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid4
+    )
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
