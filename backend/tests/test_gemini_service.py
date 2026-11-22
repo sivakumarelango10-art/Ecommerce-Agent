@@ -160,3 +160,36 @@ def test_oversized_questions_are_rejected(service_factory):
         service.answer("x" * 4001)
 
     assert client.models.calls == []
+
+
+def test_custom_system_instruction_and_content_sequence(service_factory):
+    service, client = service_factory(
+        SimpleNamespace(
+            text="Order status is shipped.",
+            function_calls=[],
+            candidates=[
+                SimpleNamespace(
+                    content=types.Content(
+                        role="model",
+                        parts=[types.Part.from_text(text="Order status is shipped.")],
+                    )
+                )
+            ],
+        )
+    )
+
+    custom_sys = "Custom order support instruction."
+    history = [
+        types.Content(
+            role="user",
+            parts=[types.Part.from_text(text="Where is my order?")],
+        )
+    ]
+
+    result = service.generate(history, system_instruction=custom_sys)
+
+    assert result.text == "Order status is shipped."
+    assert result.candidate_content is not None
+    config = client.models.calls[0]["config"]
+    assert config.system_instruction == custom_sys
+    assert client.models.calls[0]["contents"] == history

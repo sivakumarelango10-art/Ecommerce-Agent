@@ -95,7 +95,11 @@ def chat_with_supervisor(
     )
     db_factory = getattr(request.app.state, "db_session_factory", None)
     try:
-        return supervisor.process(body.question, session_factory=db_factory)
+        return supervisor.process(
+            body.question,
+            session_factory=db_factory,
+            current_user=current_user,
+        )
     except GeminiTimeoutError as exc:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,

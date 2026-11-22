@@ -178,8 +178,9 @@ class ShoppingSearchResponse(BaseModel):
 
 
 class SupervisorRouteResponse(BaseModel):
-    destination: Literal["shopping_agent", "general_assistant"]
+    destination: Literal["shopping_agent", "general_assistant", "order_support"]
     confidence: float = Field(ge=0.0, le=1.0, default=1.0)
     reason: str
     shopping_response: ShoppingSearchResponse | None = None
     general_answer: str | None = None
+    order_answer: str | None = None

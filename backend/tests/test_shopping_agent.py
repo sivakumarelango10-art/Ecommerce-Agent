@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 import json
+from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
@@ -466,6 +467,60 @@ def test_supervisor_process_shopping_vs_general(isolated_db: Session):
     resp_gen = supervisor.process("What should I compare when choosing headphones?", isolated_db)
     assert resp_gen.destination == "general_assistant"
     assert resp_gen.general_answer == "General advice on products."
+
+
+def test_supervisor_routing_order_support_deterministic():
+    gemini = MockGeminiText("General advice.")
+    supervisor = SupervisorAgent(gemini)
+
+    # Order support inquiries
+    for query in [
+        "Where is my order?",
+        "Show my recent orders",
+        "What did I purchase?",
+        "Cancel my order",
+        "Status of order ORD-20261122-1A2B3C4D",
+        "Track my order",
+        "What have I ordered?",
+    ]:
+        dest, conf, _ = supervisor.route(query)
+        assert dest == "order_support", f"Expected '{query}' to route to order_support, got {dest}"
+        assert conf == 1.0
+
+    # Shopping inquiries that use the word "order" or "find"
+    for shop_query in [
+        "I want to order a laptop",
+        "Find me a laptop",
+        "Can I purchase headphones under ₹2000",
+    ]:
+        dest, conf, _ = supervisor.route(shop_query)
+        assert dest == "shopping_agent", f"Expected '{shop_query}' to route to shopping_agent, got {dest}"
+
+
+def test_supervisor_routing_gemini_proposal():
+    # Mock Gemini returning handoff_to_order_support
+    mock_order = SimpleNamespace(
+        text=None,
+        function_calls=[
+            types.FunctionCall(name="handoff_to_order_support", args={"reason": "Customer inquiry regarding package."})
+        ],
+    )
+    supervisor = SupervisorAgent(SimpleNamespace(generate=lambda *a, **kw: mock_order, answer=lambda *a: ""))
+    dest, conf, reason = supervisor.route("Package inquiry")
+    assert dest == "order_support"
+    assert conf == 0.9
+    assert "package" in reason.lower()
+
+
+def test_supervisor_process_order_support_unauthenticated(isolated_db: Session):
+    gemini = MockGeminiText("Unused.")
+    supervisor = SupervisorAgent(gemini)
+
+    resp = supervisor.process("Where is my order?", isolated_db, current_user_id=None)
+    assert resp.destination == "order_support"
+    assert resp.order_answer is not None
+    assert "sign in" in resp.order_answer.lower()
+
 
 
 # --- 11. API Integration Tests (Endpoint /api/v1/shopping/search) ---

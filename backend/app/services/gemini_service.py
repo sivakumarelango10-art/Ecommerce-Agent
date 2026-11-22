@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 class GeminiResult:
     text: str | None
     function_calls: tuple[types.FunctionCall, ...]
+    candidate_content: types.Content | None = None
 
 
 _SYSTEM_INSTRUCTION = (
@@ -62,20 +63,42 @@ class GeminiService:
 
     def generate(
         self,
-        question: str,
+        contents: str | Sequence[types.Content] | None = None,
         *,
+        question: str | None = None,
         tools: Sequence[types.Tool] | None = None,
+        system_instruction: str | None = None,
     ) -> GeminiResult:
-        question = question.strip()
-        if not question:
-            raise ValueError("question must not be blank")
-        if len(question) > MAX_QUESTION_LENGTH:
-            raise ValueError(
-                f"question must not exceed {MAX_QUESTION_LENGTH} characters"
-            )
+        if contents is None:
+            if question is not None:
+                contents = question
+            else:
+                raise ValueError("question must not be blank")
+
+        if isinstance(contents, str):
+            contents_str = contents.strip()
+            if not contents_str:
+                raise ValueError("question must not be blank")
+            if len(contents_str) > MAX_QUESTION_LENGTH:
+                raise ValueError(
+                    f"question must not exceed {MAX_QUESTION_LENGTH} characters"
+                )
+            payload_contents: str | list[types.Content] = contents_str
+        elif isinstance(contents, Sequence):
+            if not contents:
+                raise ValueError("contents must not be empty")
+            payload_contents = list(contents)
+        else:
+            payload_contents = contents
+
+        effective_instruction = (
+            system_instruction
+            if system_instruction is not None
+            else _SYSTEM_INSTRUCTION
+        )
 
         config = types.GenerateContentConfig(
-            system_instruction=_SYSTEM_INSTRUCTION,
+            system_instruction=effective_instruction,
             tools=list(tools) if tools else None,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(
                 disable=True
@@ -85,7 +108,7 @@ class GeminiService:
         try:
             response = self._client.models.generate_content(
                 model=self._model,
-                contents=question,
+                contents=payload_contents,
                 config=config,
             )
         except (httpx.TimeoutException, TimeoutError) as exc:
@@ -129,6 +152,23 @@ class GeminiService:
             )
             raise GeminiResponseError("Gemini returned no usable content.")
 
+        candidate_content: types.Content | None = None
+        if getattr(response, "candidates", None) and len(response.candidates) > 0:
+            candidate_content = getattr(response.candidates[0], "content", None)
+        if candidate_content is None and function_calls:
+            candidate_content = types.Content(
+                role="model",
+                parts=[
+                    types.Part.from_function_call(name=fc.name, args=dict(fc.args or {}))
+                    for fc in function_calls
+                ],
+            )
+        elif candidate_content is None and text:
+            candidate_content = types.Content(
+                role="model",
+                parts=[types.Part.from_text(text=text)],
+            )
+
         logger.info(
             "Gemini request completed",
             extra={
@@ -137,7 +177,11 @@ class GeminiService:
                 "function_call_count": len(function_calls),
             },
         )
-        return GeminiResult(text=text, function_calls=function_calls)
+        return GeminiResult(
+            text=text,
+            function_calls=function_calls,
+            candidate_content=candidate_content,
+        )
 
     def answer(self, question: str) -> str:
         result = self.generate(question)
