@@ -69,23 +69,32 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-md overflow-hidden transform transition-all">
         {/* Header */}
-        <div className="relative p-6 pb-4 border-b border-slate-100 flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-bold text-slate-900">
-              {tab === 'login' ? 'Welcome Back' : 'Create Customer Account'}
-            </h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              {tab === 'login'
-                ? 'Sign in to access your orders and personalized support.'
-                : 'Sign up to track purchases and chat with your AI order assistant.'}
-            </p>
-          </div>
+        <div className="relative p-6 pb-4 border-b border-slate-100 flex flex-col items-center text-center">
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+            className="absolute top-4 right-4 p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+            aria-label="Close"
           >
             <X className="w-5 h-5" />
           </button>
+
+          {/* Official StoreFlow Logo */}
+          <div className="mb-3">
+            <img
+              src="/storeflow-logo.svg"
+              alt="StoreFlow - Order Support & Shopping Agent"
+              className="h-9 sm:h-10 w-auto object-contain mx-auto"
+            />
+          </div>
+
+          <h3 className="text-lg font-bold text-slate-900">
+            {tab === 'login' ? 'Welcome Back' : 'Create Customer Account'}
+          </h3>
+          <p className="text-xs text-slate-500 mt-1 max-w-xs">
+            {tab === 'login'
+              ? 'Sign in to access your orders and personalized support.'
+              : 'Sign up to track purchases and chat with your AI order assistant.'}
+          </p>
         </div>
 
         {/* Tab Selector */}

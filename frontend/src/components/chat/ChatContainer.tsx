@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   Send,
-  Sparkles,
   Package,
   ShoppingBag,
   HelpCircle,
@@ -150,8 +149,13 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
       <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-2">
         {messages.length === 0 ? (
           <div className="h-full flex flex-col justify-center items-center text-center p-6 max-w-lg mx-auto">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600 mb-4 shadow-xs">
-              <Sparkles className="w-6 h-6" />
+            {/* Official StoreFlow Logo */}
+            <div className="mb-4">
+              <img
+                src="/storeflow-logo.svg"
+                alt="StoreFlow - Order Support & Shopping Agent"
+                className="h-11 sm:h-12 w-auto object-contain mx-auto"
+              />
             </div>
             <h3 className="text-lg font-bold text-slate-900 tracking-tight mb-1">
               How can I assist your shopping today?

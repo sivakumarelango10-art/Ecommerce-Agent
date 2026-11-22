@@ -73,17 +73,23 @@ export const GuestOrderPortal: React.FC<GuestOrderPortalProps> = ({ isOpen, onCl
         {/* Header */}
         <div className="relative p-6 border-b border-slate-100 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600">
-              <ShieldCheck className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="text-lg font-bold text-slate-900">Guest Order Verification</h3>
-              <p className="text-xs text-slate-500">Secure OTP verification for guest checkouts</p>
+            <img
+              src="/storeflow-logo.svg"
+              alt="StoreFlow - Order Support & Shopping Agent"
+              className="h-8 sm:h-9 w-auto object-contain hidden sm:block"
+            />
+            <div className="sm:border-l sm:border-slate-200 sm:pl-3">
+              <h3 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-1.5">
+                <ShieldCheck className="w-5 h-5 text-emerald-600" />
+                <span>Guest Order Verification</span>
+              </h3>
+              <p className="text-xs text-slate-500">Secure OTP verification for StoreFlow guest checkouts</p>
             </div>
           </div>
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+            aria-label="Close"
           >
             <X className="w-5 h-5" />
           </button>

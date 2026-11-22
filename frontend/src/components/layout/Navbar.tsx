@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bot, User, ShieldCheck, LogOut, LogIn, CheckCircle2 } from 'lucide-react';
+import { User, ShieldCheck, LogOut, LogIn, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { Button } from '../ui/Button';
 
@@ -22,20 +22,23 @@ export const Navbar: React.FC<NavbarProps> = ({
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
         {/* Brand / Logo */}
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-4 sm:gap-6">
           <div className="flex items-center gap-2.5">
-            <div className="h-9 w-9 rounded-xl bg-slate-900 flex items-center justify-center text-white shadow-sm ring-1 ring-slate-800">
-              <Bot className="h-5 w-5 text-emerald-400" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-slate-900 tracking-tight text-base">StoreFlow</span>
-                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                  <CheckCircle2 className="w-2.5 h-2.5" /> AI Supervisor
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-500 font-medium -mt-0.5">Order Support & Shopping Agent</p>
-            </div>
+            <button
+              type="button"
+              onClick={() => setActiveView('chat')}
+              className="flex items-center focus:outline-none focus:ring-2 focus:ring-emerald-500 rounded-lg p-0.5 transition-transform hover:opacity-95"
+              aria-label="StoreFlow Home"
+            >
+              <img
+                src="/storeflow-logo.svg"
+                alt="StoreFlow - Order Support & Shopping Agent"
+                className="h-8 sm:h-9 md:h-10 w-auto object-contain"
+              />
+            </button>
+            <span className="hidden lg:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+              <CheckCircle2 className="w-2.5 h-2.5" /> AI Supervisor
+            </span>
           </div>
 
           {/* Navigation Tabs */}
