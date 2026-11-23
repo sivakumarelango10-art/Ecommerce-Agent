@@ -50,7 +50,14 @@ def service_factory(monkeypatch: pytest.MonkeyPatch):
 
         def fake_client_factory(**kwargs: object) -> FakeClient:
             assert kwargs["api_key"] == "test-key-not-sent"
-            assert kwargs["http_options"].timeout == 30_000
+            http_options = kwargs["http_options"]
+            assert http_options.timeout == 30_000
+            retry = http_options.retry_options
+            assert retry is not None
+            assert retry.attempts == 4
+            assert retry.initial_delay == 1.0
+            assert retry.max_delay == 4.0
+            assert retry.http_status_codes == [408, 429, 500, 502, 503, 504]
             return client
 
         monkeypatch.setattr(gemini_service.genai, "Client", fake_client_factory)
@@ -193,3 +200,26 @@ def test_custom_system_instruction_and_content_sequence(service_factory):
     config = client.models.calls[0]["config"]
     assert config.system_instruction == custom_sys
     assert client.models.calls[0]["contents"] == history
+
+
+def test_gemini_service_configures_sdk_http_retry_options(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-configured")
+    monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///:memory:")
+    monkeypatch.setenv("AUTH_SECRET_KEY", "test-auth-secret-key-0123456789abcdef")
+    monkeypatch.setenv("GEMINI_TIMEOUT_SECONDS", "30")
+    settings = Settings(_env_file=None)
+    service = GeminiService(settings)
+    try:
+        retry_options = service._client._api_client._http_options.retry_options
+        assert retry_options is not None
+        assert retry_options.attempts == 4
+        assert retry_options.initial_delay == 1.0
+        assert retry_options.max_delay == 4.0
+        assert retry_options.http_status_codes == [408, 429, 500, 502, 503, 504]
+
+        # Verify underlying tenacity retry settings configured in google-genai
+        assert service._client._api_client._retry.stop.max_attempt_number == 4
+        assert service._client._api_client._retry.wait.initial == 1.0
+        assert service._client._api_client._retry.wait.max == 4.0
+    finally:
+        service.close()
