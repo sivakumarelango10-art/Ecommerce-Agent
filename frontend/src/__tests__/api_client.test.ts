@@ -249,4 +249,76 @@ describe('API Client & Token Isolation', () => {
       }
     }
   });
+
+  it('correctly handles neon management API methods with admin bearer token', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ status: 'success' }),
+    } as Response);
+
+    const adminToken = 'admin_jwt_token_secret';
+
+    // 1. Neon Status
+    await api.neon.status(adminToken);
+    expect(fetchSpy).toHaveBeenLastCalledWith(
+      '/api/v1/neon/status',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${adminToken}`,
+        }),
+      })
+    );
+
+    // 2. Neon Function Hello
+    await api.neon.invokeHello(adminToken);
+    expect(fetchSpy).toHaveBeenLastCalledWith(
+      '/api/v1/neon/function/hello',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${adminToken}`,
+        }),
+      })
+    );
+
+    // 3. Neon Storage Upload
+    await api.neon.uploadAsset('docs/audit.txt', 'audit content', 'text/plain', adminToken);
+    expect(fetchSpy).toHaveBeenLastCalledWith(
+      '/api/v1/neon/storage/upload',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${adminToken}`,
+          'Content-Type': 'application/json',
+        }),
+        body: JSON.stringify({
+          key: 'docs/audit.txt',
+          content: 'audit content',
+          content_type: 'text/plain',
+        }),
+      })
+    );
+
+    // 4. Neon Storage Download
+    await api.neon.downloadAsset('docs/audit.txt', adminToken);
+    expect(fetchSpy).toHaveBeenLastCalledWith(
+      '/api/v1/neon/storage/download?key=docs%2Faudit.txt',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${adminToken}`,
+        }),
+      })
+    );
+
+    // 5. Neon AI Gateway Models
+    await api.neon.getModels(adminToken);
+    expect(fetchSpy).toHaveBeenLastCalledWith(
+      '/api/v1/neon/ai-gateway/models',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${adminToken}`,
+        }),
+      })
+    );
+  });
 });

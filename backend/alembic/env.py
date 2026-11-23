@@ -14,11 +14,23 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
-database_url = os.environ.get("DATABASE_URL") or config.get_main_option(
-    "sqlalchemy.url"
-)
+
+database_url = os.environ.get("DATABASE_URL") or config.get_main_option("sqlalchemy.url")
+
+# If connecting to Neon pooled endpoint, use direct unpooled connection for migrations
+if database_url and ("neon.tech" in database_url or "-pooler" in database_url):
+    unpooled = os.environ.get("DATABASE_URL_UNPOOLED")
+    if unpooled:
+        database_url = unpooled
+
 if not database_url:
     raise RuntimeError("Set DATABASE_URL before running Alembic.")
+
+if database_url.startswith("postgresql://"):
+    database_url = "postgresql+psycopg://" + database_url[len("postgresql://"):]
+elif database_url.startswith("postgres://"):
+    database_url = "postgresql+psycopg://" + database_url[len("postgres://"):]
+
 config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 
 target_metadata = Base.metadata

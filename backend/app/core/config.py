@@ -35,12 +35,87 @@ class Settings(BaseSettings):
         validation_alias="GEMINI_TIMEOUT_SECONDS",
     )
     database_url: SecretStr = Field(validation_alias="DATABASE_URL")
+    database_url_unpooled: SecretStr | None = Field(
+        default=None,
+        validation_alias="DATABASE_URL_UNPOOLED",
+    )
+    neon_branch: str | None = Field(
+        default=None,
+        validation_alias="NEON_BRANCH",
+    )
+    neon_branch_id: str | None = Field(
+        default=None,
+        validation_alias="NEON_BRANCH_ID",
+    )
+    neon_function_host_suffix: str | None = Field(
+        default=None,
+        validation_alias="NEON_FUNCTION_HOST_SUFFIX",
+    )
+    neon_auth_base_url: str | None = Field(
+        default=None,
+        validation_alias="NEON_AUTH_BASE_URL",
+    )
+    neon_auth_jwks_url: str | None = Field(
+        default=None,
+        validation_alias="NEON_AUTH_JWKS_URL",
+    )
+    neon_ai_gateway_token: SecretStr | None = Field(
+        default=None,
+        validation_alias="NEON_AI_GATEWAY_TOKEN",
+    )
+    neon_ai_gateway_base_url: str | None = Field(
+        default=None,
+        validation_alias="NEON_AI_GATEWAY_BASE_URL",
+    )
+    neon_realtime_url: str | None = Field(
+        default=None,
+        validation_alias="NEON_REALTIME_URL",
+    )
+    neon_realtime_secret: SecretStr | None = Field(
+        default=None,
+        validation_alias="NEON_REALTIME_SECRET",
+    )
+    aws_access_key_id: SecretStr | None = Field(
+        default=None,
+        validation_alias="AWS_ACCESS_KEY_ID",
+    )
+    aws_secret_access_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="AWS_SECRET_ACCESS_KEY",
+    )
+    aws_endpoint_url_s3: str | None = Field(
+        default=None,
+        validation_alias="AWS_ENDPOINT_URL_S3",
+    )
+    aws_region: str | None = Field(
+        default=None,
+        validation_alias="AWS_REGION",
+    )
     auth_secret_key: SecretStr = Field(validation_alias="AUTH_SECRET_KEY")
     access_token_expire_minutes: int = Field(
         default=15,
         gt=0,
         le=1440,
         validation_alias="ACCESS_TOKEN_EXPIRE_MINUTES",
+    )
+    admin_emails: set[str] = Field(
+        default_factory=set,
+        validation_alias="ADMIN_EMAILS",
+    )
+    storage_max_upload_bytes: int = Field(
+        default=2 * 1024 * 1024,
+        gt=0,
+        validation_alias="STORAGE_MAX_UPLOAD_BYTES",
+    )
+    storage_allowed_content_types: set[str] = Field(
+        default={
+            "text/plain",
+            "text/markdown",
+            "text/csv",
+            "application/json",
+            "application/octet-stream",
+        },
+        validation_alias="STORAGE_ALLOWED_CONTENT_TYPES",
     )
     catalogue_currency: str = Field(
         default=DEFAULT_CATALOGUE_CURRENCY,
@@ -154,6 +229,10 @@ class Settings(BaseSettings):
         raw_url = value.get_secret_value().strip()
         if not raw_url:
             raise ValueError("DATABASE_URL must not be blank")
+        if raw_url.startswith("postgresql://"):
+            raw_url = "postgresql+psycopg://" + raw_url[len("postgresql://"):]
+        elif raw_url.startswith("postgres://"):
+            raw_url = "postgresql+psycopg://" + raw_url[len("postgres://"):]
         try:
             url = make_url(raw_url)
         except ArgumentError as exc:
@@ -220,6 +299,54 @@ class Settings(BaseSettings):
                 "Wildcard origin '*' is not allowed when credentials support is enabled. Specify explicit origins."
             )
         return value
+
+    @field_validator("admin_emails", mode="before")
+    @classmethod
+    def validate_admin_emails(cls, value: Any) -> set[str]:
+        if value is None:
+            return set()
+        if isinstance(value, str):
+            clean = value.strip()
+            if not clean:
+                return set()
+            if clean.startswith("[") and clean.endswith("]"):
+                try:
+                    parsed = json.loads(clean)
+                    if isinstance(parsed, list):
+                        return {str(item).strip().lower() for item in parsed if str(item).strip()}
+                except Exception:
+                    pass
+            return {item.strip().lower() for item in clean.split(",") if item.strip()}
+        elif isinstance(value, (list, tuple, set)):
+            return {str(item).strip().lower() for item in value if str(item).strip()}
+        return set()
+
+    @field_validator("storage_allowed_content_types", mode="before")
+    @classmethod
+    def validate_storage_allowed_content_types(cls, value: Any) -> set[str]:
+        if value is None:
+            return {
+                "text/plain",
+                "text/markdown",
+                "text/csv",
+                "application/json",
+                "application/octet-stream",
+            }
+        if isinstance(value, str):
+            clean = value.strip()
+            if not clean:
+                return set()
+            if clean.startswith("[") and clean.endswith("]"):
+                try:
+                    parsed = json.loads(clean)
+                    if isinstance(parsed, list):
+                        return {str(item).strip().lower() for item in parsed if str(item).strip()}
+                except Exception:
+                    pass
+            return {item.strip().lower() for item in clean.split(",") if item.strip()}
+        elif isinstance(value, (list, tuple, set)):
+            return {str(item).strip().lower() for item in value if str(item).strip()}
+        return set()
 
 
 def load_settings(*, env_file: str | None = ".env") -> Settings:
