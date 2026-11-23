@@ -57,7 +57,13 @@ class GeminiService:
         self._client = genai.Client(
             api_key=api_key,
             http_options=types.HttpOptions(
-                timeout=settings.gemini_timeout_seconds * 1000
+                timeout=settings.gemini_timeout_seconds * 1000,
+                retry_options=types.HttpRetryOptions(
+                    attempts=4,
+                    initial_delay=1.0,
+                    max_delay=4.0,
+                    http_status_codes=[408, 429, 500, 502, 503, 504],
+                ),
             ),
         )
 
