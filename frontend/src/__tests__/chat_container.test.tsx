@@ -1,9 +1,7 @@
-import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { ChatContainer } from '../components/chat/ChatContainer';
 import { AuthProvider } from '../context/AuthContext';
-import { api } from '../api/client';
 
 describe('ChatContainer Component', () => {
   beforeEach(() => {
