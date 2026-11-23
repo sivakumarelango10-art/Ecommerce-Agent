@@ -215,8 +215,12 @@ class ShoppingAgent:
         prompt = f"{_INTENT_EXTRACTION_PROMPT}\nUser request: {query}"
         try:
             raw_response = self._gemini.answer(prompt)
-        except (GeminiTimeoutError, GeminiServiceError):
-            raise
+        except (GeminiTimeoutError, GeminiServiceError) as exc:
+            logger.warning(
+                "Gemini service unavailable during intent extraction, falling back to deterministic extraction",
+                extra={"event": "intent_extraction_gemini_error", "error_type": type(exc).__name__},
+            )
+            return _fallback_extract_intent(query)
         except Exception as exc:
             logger.warning(
                 "Gemini intent extraction failed, using fallback",

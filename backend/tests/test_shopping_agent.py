@@ -8,7 +8,7 @@ import httpx
 import pytest
 from google.genai import errors, types
 from pydantic import ValidationError
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.app.core.config import Settings
@@ -29,6 +29,7 @@ from backend.app.security.tokens import create_access_token
 from backend.app.services.gemini_service import (
     GeminiProviderError,
     GeminiResponseError,
+    GeminiServiceError,
     GeminiTimeoutError,
 )
 from backend.app.services.product_discovery_service import search_catalogue_products
@@ -637,7 +638,7 @@ def test_api_shopping_search_invalid_request_returns_422(api_client):
     assert resp4.status_code == 422
 
 
-def test_api_shopping_search_gemini_timeout_returns_504(api_client):
+def test_api_shopping_search_gemini_timeout_falls_back_to_deterministic_search(api_client):
     client, fake_client = api_client
     fake_client.models.outcome = httpx.ReadTimeout("mocked read timeout")
 
@@ -645,11 +646,13 @@ def test_api_shopping_search_gemini_timeout_returns_504(api_client):
         "/api/v1/shopping/search",
         json={"query": "Find running shoes"},
     )
-    assert response.status_code == 504
-    assert response.json()["detail"] == "The Gemini request timed out."
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] in {"success", "no_results"}
+    assert data["currency"] == "INR"
 
 
-def test_api_shopping_search_gemini_error_returns_502(api_client):
+def test_api_shopping_search_gemini_error_falls_back_to_deterministic_search(api_client):
     client, fake_client = api_client
     fake_client.models.outcome = errors.APIError(500, {"error": "service down"})
 
@@ -657,8 +660,10 @@ def test_api_shopping_search_gemini_error_returns_502(api_client):
         "/api/v1/shopping/search",
         json={"query": "Find running shoes"},
     )
-    assert response.status_code == 502
-    assert response.json()["detail"] == "The Gemini service could not complete the request."
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] in {"success", "no_results"}
+    assert data["currency"] == "INR"
 
 
 def test_api_shopping_search_currency_mismatch_returns_unsupported(api_client):
@@ -1441,3 +1446,115 @@ def test_api_supervisor_chat_shopping_question_db_error_returns_safe_message(api
         assert data["general_answer"] is None
     finally:
         client.app.state.db_session_factory = orig_factory
+
+
+
+# --- 13. Deterministic Fallback on Gemini Service & Timeout Errors ---
+
+def test_intent_extraction_gemini_503_service_error_triggers_fallback():
+    """Gemini HTTP 503 / GeminiProviderError triggers deterministic intent fallback."""
+    gemini = MockGeminiText(GeminiProviderError("503 Service Unavailable: High load"))
+    agent = ShoppingAgent(gemini, catalogue_currency="INR")
+
+    intent = agent.extract_intent("Find wireless headphones under ₹3000")
+
+    assert intent.is_shopping_intent is True
+    assert intent.is_ambiguous_or_insufficient is False
+    assert intent.max_budget == Decimal("3000")
+    assert intent.currency == "INR"
+    assert "wireless" in intent.keywords
+    assert "headphones" in intent.keywords
+
+
+def test_intent_extraction_gemini_timeout_triggers_fallback():
+    """Gemini timeout triggers deterministic intent fallback."""
+    gemini = MockGeminiText(GeminiTimeoutError("The Gemini request timed out after 30000ms"))
+    agent = ShoppingAgent(gemini, catalogue_currency="INR")
+
+    intent = agent.extract_intent("Find wireless headphones under ₹3000")
+
+    assert intent.is_shopping_intent is True
+    assert intent.is_ambiguous_or_insufficient is False
+    assert intent.max_budget == Decimal("3000")
+    assert intent.currency == "INR"
+    assert "wireless" in intent.keywords
+    assert "headphones" in intent.keywords
+
+
+def test_intent_extraction_gemini_service_error_triggers_fallback():
+    """Generic GeminiServiceError triggers deterministic intent fallback."""
+    gemini = MockGeminiText(GeminiServiceError("Upstream Gemini transport failure"))
+    agent = ShoppingAgent(gemini, catalogue_currency="INR")
+
+    intent = agent.extract_intent("laptop under ₹70,000")
+
+    assert intent.is_shopping_intent is True
+    assert intent.is_ambiguous_or_insufficient is False
+    assert intent.max_budget == Decimal("70000")
+    assert "laptop" in intent.keywords
+
+
+def test_shopping_search_with_gemini_service_error_reaches_catalogue_search(isolated_db: Session):
+    """When Gemini raises GeminiServiceError, search uses fallback intent and successfully queries PostgreSQL."""
+    cat_audio = isolated_db.scalar(select(ProductCategory).where(ProductCategory.slug == "audio"))
+    prod = Product(
+        id=uuid4(),
+        sku="BOAT-RCKZ-255",
+        name="boAt Rockerz 255 Wireless Earphones",
+        description="Bluetooth in-ear neckband wireless earphones with deep bass.",
+        price=Decimal("1299.00"),
+        is_active=True,
+        categories=[cat_audio] if cat_audio else [],
+    )
+    inv = Inventory(product_id=prod.id, available_quantity=15)
+    isolated_db.add_all([prod, inv])
+    isolated_db.commit()
+
+    gemini = MockGeminiText(GeminiProviderError("503 Service Unavailable"))
+    agent = ShoppingAgent(gemini, catalogue_currency="INR")
+
+    req = ShoppingSearchRequest(query="Find wireless earphones under ₹2000")
+    response = agent.search(req, isolated_db)
+
+    assert response.status == "success"
+    assert response.total_count >= 1
+    found = next((p for p in response.products if p.sku == "BOAT-RCKZ-255"), None)
+    assert found is not None
+    assert found.price == Decimal("1299.00")
+    assert found.in_stock is True
+    assert found.recommendation_reason != ""
+    assert "₹1299.00 is within your budget of ₹2000.00" in found.recommendation_reason
+
+
+def test_supervisor_chat_with_gemini_intent_extraction_error_returns_catalogue_products(isolated_db: Session):
+    """Supervisor chat delivers real catalogue products via fallback when Gemini intent extraction fails."""
+    cat_audio = isolated_db.scalar(select(ProductCategory).where(ProductCategory.slug == "audio"))
+    prod = Product(
+        id=uuid4(),
+        sku="NOISE-TW-100",
+        name="Noise Buds Wireless Earbuds",
+        description="True wireless earbuds with active noise cancellation.",
+        price=Decimal("1899.00"),
+        is_active=True,
+        categories=[cat_audio] if cat_audio else [],
+    )
+    inv = Inventory(product_id=prod.id, available_quantity=10)
+    isolated_db.add_all([prod, inv])
+    isolated_db.commit()
+
+    class FailingIntentGemini:
+        def answer(self, prompt: str) -> str:
+            raise GeminiProviderError("503 Service Unavailable from model")
+
+    gemini = FailingIntentGemini()
+    supervisor = SupervisorAgent(gemini, catalogue_currency="INR")
+
+    result = supervisor.process("Buy wireless earbuds under ₹2500", session=isolated_db)
+
+    assert result.destination == "shopping_agent"
+    assert result.shopping_response is not None
+    assert result.shopping_response.status == "success"
+    assert result.shopping_response.message != CATALOGUE_UNAVAILABLE_MESSAGE
+    assert result.shopping_response.total_count >= 1
+    found = next((p for p in result.shopping_response.products if p.sku == "NOISE-TW-100"), None)
+    assert found is not None
