@@ -7,8 +7,20 @@ Includes strict database-target protection:
 - Rejection of protected development and test databases.
 - Validation of both DATABASE_URL and DATABASE_URL_UNPOOLED when configured.
 - Explicit staging confirmation requirement (--confirm-staging).
-- Transactional dry-run verification mode.
+- Transactional dry-run verification mode (--dry-run).
 - Strict credential concealment in all errors and logs.
+
+Execution Modes (mutually exclusive):
+1. Dry-run mode (--dry-run):
+   - Requires an active database connection to the approved staging database.
+   - Executes transactional INSERT statements using transaction flushes to validate
+     all constraints, foreign keys, and unique indices against the target schema.
+   - Explicitly rolls back the transaction upon completion; zero changes are committed or persisted.
+   - WARNING: This is NOT read-only and NOT an offline simulation. It executes active
+     transactional writes within an uncommitted transaction.
+2. Live mode (--confirm-staging):
+   - Requires explicit '--confirm-staging' flag.
+   - Connects to the approved staging database, executes inserts, and explicitly commits records.
 """
 
 from __future__ import annotations
@@ -465,8 +477,15 @@ def validate_safe_target_database(
 def seed_catalogue(session: Session, *, dry_run: bool = False) -> SeedSummary:
     """Idempotently seed categories, products, and inventory records.
 
-    If dry_run is True, performs the operations within the session to validate
-    all foreign keys and constraints, then rolls back without committing.
+    If dry_run is True:
+        - Executes transactional INSERT statements and flushes them to the database
+          to validate all foreign keys, unique indices, and check constraints.
+        - Explicitly rolls back the transaction without committing, ensuring zero
+          data persists.
+        - WARNING: Requires an active database connection; this is NOT a read-only or
+          offline simulation.
+    If dry_run is False:
+        - Commits all changes to the database.
     """
     categories_created = 0
     categories_existing = 0
@@ -554,22 +573,31 @@ def seed_catalogue(session: Session, *, dry_run: bool = False) -> SeedSummary:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Idempotently seed the StoreFlow product catalogue into the staging database."
+        description=(
+            "Idempotently seed the StoreFlow product catalogue into the staging database.\n\n"
+            "Execution Modes (mutually exclusive):\n"
+            "  --dry-run:         Connects to the database and executes INSERT statements via\n"
+            "                     transaction flushes to validate constraints, then explicitly\n"
+            "                     rolls back. NOT read-only and NOT an offline simulation.\n"
+            "  --confirm-staging: Live execution mode that commits catalogue records to staging."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument(
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
         "--dry-run",
         action="store_true",
         help=(
             "Connect to the staging database and execute seed inserts within an uncommitted transaction, "
             "validating all constraints and foreign keys before rolling back. "
-            "WARNING: This connects to the database and executes transactional writes; "
-            "it is NOT an offline or purely read-only check."
+            "WARNING: Requires a real database connection and executes transactional INSERT writes; "
+            "it is NOT an offline simulation or a read-only check."
         ),
     )
-    parser.add_argument(
+    mode_group.add_argument(
         "--confirm-staging",
         action="store_true",
-        help="Explicit confirmation required to write demo records to the staging database.",
+        help="Explicit confirmation required to write demo records to the staging database and commit them.",
     )
     parser.add_argument(
         "--database-url",
@@ -578,7 +606,10 @@ def main() -> int:
         help="Target database URL. Overrides DATABASE_URL and DATABASE_URL_UNPOOLED from environment.",
     )
 
-    args = parser.parse_args()
+    try:
+        args = parser.parse_args()
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 2
 
     # Safety Guard 1: Require explicit staging confirmation unless running in dry-run mode
     if not args.dry_run and not args.confirm_staging:
