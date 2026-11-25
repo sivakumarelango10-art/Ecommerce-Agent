@@ -226,7 +226,7 @@ def test_gemini_service_configures_sdk_http_retry_options(monkeypatch: pytest.Mo
 
 
 def test_legacy_single_key_configuration(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "legacy-key-12345")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-single-key-fixture")
     monkeypatch.delenv("GEMINI_API_KEYS", raising=False)
     monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///:memory:")
     monkeypatch.setenv("AUTH_SECRET_KEY", "test-auth-secret-key-0123456789abcdef")
@@ -234,8 +234,8 @@ def test_legacy_single_key_configuration(monkeypatch: pytest.MonkeyPatch):
     settings = Settings(_env_file=None)
     assert len(settings.platform_gemini_keys) == 1
     assert settings.platform_gemini_keys[0].quota_group == "default"
-    assert settings.platform_gemini_keys[0].key.get_secret_value() == "legacy-key-12345"
-    assert settings.gemini_api_key.get_secret_value() == "legacy-key-12345"
+    assert settings.platform_gemini_keys[0].key.get_secret_value() == "test-gemini-single-key-fixture"
+    assert settings.gemini_api_key.get_secret_value() == "test-gemini-single-key-fixture"
 
     fake_client = FakeClient("legacy response")
     service = GeminiService(settings, client_factory=lambda **kwargs: fake_client)

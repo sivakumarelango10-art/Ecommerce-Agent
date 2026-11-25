@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { AuthContext } from '../context/AuthContext';
 import { AIProviderCatalogue } from '../components/admin/AIProviderCatalogue';
 import { AIProviderDetail } from '../components/admin/AIProviderDetail';
@@ -228,6 +228,35 @@ const mockModels: AIModel[] = [
     supports_speech_output: false,
     context_window: 32000,
     max_output_tokens: 4096,
+    pricing_input_per_million: null,
+    pricing_output_per_million: null,
+    pricing_currency: 'USD',
+    access_class: 'UNKNOWN',
+    free_tier_limit_metadata: null,
+    terms_url: null,
+    pricing_url: null,
+    last_pricing_verified_at: null,
+    is_enabled: false,
+    is_default: false,
+    created_at: '2026-11-20T10:00:00Z',
+    updated_at: '2026-11-20T10:00:00Z',
+  },
+  {
+    id: 'm-5',
+    provider_id: 'p-3',
+    model_identifier: 'llama-3.1-8b-instant',
+    display_name: 'Llama 3.1 8B Instant (Groq)',
+    description: '[ENTERPRISE_RESTRICTED] Fast, low-latency Llama 3.1 on Groq. Free/developer tier deprecated Aug 16, 2026; requires enterprise tier entitlement.',
+    supports_text: true,
+    supports_vision: false,
+    supports_tools: true,
+    supports_streaming: false,
+    supports_json_mode: true,
+    supports_embeddings: false,
+    supports_speech_input: false,
+    supports_speech_output: false,
+    context_window: 131072,
+    max_output_tokens: 8192,
     pricing_input_per_million: null,
     pricing_output_per_million: null,
     pricing_currency: 'USD',
@@ -881,5 +910,33 @@ describe('StoreFlow Phase 6E.2: Admin AI Control Centre Frontend Test Suite', ()
     );
 
     vi.unstubAllGlobals();
+  });
+
+  // 25. Enterprise-restricted models clearly communicate UNKNOWN access class and disabled runtime status
+  it('25. Enterprise-restricted models clearly communicate UNKNOWN access class and disabled runtime status', async () => {
+    renderWithAuth(<AIModelRegistry />, {
+      currentUser: { id: 'sa1', email: 'super@store.com', role: 'super_admin', is_active: true },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Llama 3.1 8B Instant (Groq)')).toBeInTheDocument();
+    });
+
+    // Verify UNKNOWN badge
+    const modelCard = screen.getByTestId('model-card-llama-3.1-8b-instant');
+    expect(within(modelCard).getByText('UNKNOWN')).toBeInTheDocument();
+
+    // Verify Enterprise restriction warning banner
+    const banner = screen.getByTestId('enterprise-restricted-banner-llama-3.1-8b-instant');
+    expect(banner).toBeInTheDocument();
+    expect(banner).toHaveTextContent(/Enterprise Contract Required/i);
+    expect(banner).toHaveTextContent(/Not Available in StoreFlow/i);
+    expect(banner).toHaveTextContent(/Access Class: Unknown/i);
+    expect(banner).toHaveTextContent(/Availability: Disabled/i);
+
+    // Verify Enable button is disabled
+    const enableButton = within(modelCard).getByRole('button', { name: 'Enable' });
+    expect(enableButton).toBeDisabled();
+    expect(enableButton).toHaveAttribute('title', expect.stringContaining('Enterprise committed-spend contract required'));
   });
 });

@@ -27,7 +27,7 @@ _SECRET_VALUE_PATTERNS = [
     re.compile(r"\bAIza[0-9A-Za-z\-_]{30,}\b"),
     # Synthetic test keys for safe unit test verification without real credentials
     re.compile(r"\bFAKE_API_KEY_[a-zA-Z0-9_\-]{10,}\b"),
-    # OpenAI API keys
+    # Provider secret keys (sk-...)
     re.compile(r"\bsk-[a-zA-Z0-9]{20,}\b"),
     # Anthropic API keys
     re.compile(r"\bsk-ant-[a-zA-Z0-9]{20,}\b"),

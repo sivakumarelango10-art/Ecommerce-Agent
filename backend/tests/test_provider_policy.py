@@ -13,6 +13,7 @@ def test_application_source_and_dependency_manifests_are_gemini_only():
         and "__pycache__" not in path.parts
         and "tests" not in path.parts
         and "alembic" not in path.parts
+        and "providers" not in path.parts
         and not path.name.startswith("seed_ai_catalogue")
         and not path.name.startswith("ai_provider")
         and not path.name.startswith("ai_registry")

@@ -329,6 +329,116 @@ INITIAL_GEMINI_MODELS: list[dict[str, Any]] = [
 ]
 
 
+# Retired / deprecated Groq model identifiers to deactivate if found in existing databases
+RETIRED_GROQ_MODEL_IDENTIFIERS: set[str] = {
+    "mixtral-8x7b-32768",
+    "gemma2-9b-it",
+    "llama-3.1-70b-versatile",
+    "llama3-70b-8192",
+    "llama3-8b-8192",
+    "llama-3.2-1b-preview",
+    "llama-3.2-3b-preview",
+    "llama-3.2-11b-vision-preview",
+    "llama-3.2-90b-vision-preview",
+    "llama-3.2-90b-text-preview",
+    "qwen-qwq-32b",
+    "llama-guard-3-8b",
+    "distil-whisper-large-v3-en",
+    "deepseek-r1-distill-llama-70b",
+}
+
+INITIAL_GROQ_MODELS: list[dict[str, Any]] = [
+    {
+        "model_identifier": "openai/gpt-oss-120b",
+        "display_name": "GPT-OSS 120B (Groq)",
+        "description": "Candidate default open-weights MoE reasoning model on Groq hardware. High throughput, low latency.",
+        "supports_text": True,
+        "supports_vision": False,
+        "supports_tools": True,
+        "supports_streaming": False,
+        "supports_json_mode": True,
+        "supports_embeddings": False,
+        "supports_speech_input": False,
+        "supports_speech_output": False,
+        "context_window": 131072,
+        "max_output_tokens": 65536,
+        "access_class": ModelAccessClass.PAY_AS_YOU_GO.value,
+        "free_tier_limit_metadata": None,
+        "terms_url": "https://groq.com/terms-of-use",
+        "pricing_url": "https://groq.com/pricing",
+        "last_pricing_verified_at": None,
+        "is_default": True,
+        "is_enabled": True,
+    },
+    {
+        "model_identifier": "openai/gpt-oss-20b",
+        "display_name": "GPT-OSS 20B (Groq)",
+        "description": "High-efficiency, lightweight open-weights MoE model on Groq hardware.",
+        "supports_text": True,
+        "supports_vision": False,
+        "supports_tools": True,
+        "supports_streaming": False,
+        "supports_json_mode": True,
+        "supports_embeddings": False,
+        "supports_speech_input": False,
+        "supports_speech_output": False,
+        "context_window": 131072,
+        "max_output_tokens": 65536,
+        "access_class": ModelAccessClass.PAY_AS_YOU_GO.value,
+        "free_tier_limit_metadata": None,
+        "terms_url": "https://groq.com/terms-of-use",
+        "pricing_url": "https://groq.com/pricing",
+        "last_pricing_verified_at": None,
+        "is_default": False,
+        "is_enabled": True,
+    },
+    {
+        "model_identifier": "llama-3.3-70b-versatile",
+        "display_name": "Llama 3.3 70B Versatile (Groq)",
+        "description": "[ENTERPRISE_RESTRICTED] High-performance Llama 3.3 on Groq. Free/developer tier deprecated Aug 16, 2026; requires enterprise tier entitlement.",
+        "supports_text": True,
+        "supports_vision": False,
+        "supports_tools": True,
+        "supports_streaming": False,
+        "supports_json_mode": True,
+        "supports_embeddings": False,
+        "supports_speech_input": False,
+        "supports_speech_output": False,
+        "context_window": 131072,
+        "max_output_tokens": 32768,
+        "access_class": ModelAccessClass.UNKNOWN.value,
+        "free_tier_limit_metadata": None,
+        "terms_url": "https://groq.com/terms-of-use",
+        "pricing_url": "https://groq.com/pricing",
+        "last_pricing_verified_at": None,
+        "is_default": False,
+        "is_enabled": False,
+    },
+    {
+        "model_identifier": "llama-3.1-8b-instant",
+        "display_name": "Llama 3.1 8B Instant (Groq)",
+        "description": "[ENTERPRISE_RESTRICTED] Fast, low-latency Llama 3.1 on Groq. Free/developer tier deprecated Aug 16, 2026; requires enterprise tier entitlement.",
+        "supports_text": True,
+        "supports_vision": False,
+        "supports_tools": True,
+        "supports_streaming": False,
+        "supports_json_mode": True,
+        "supports_embeddings": False,
+        "supports_speech_input": False,
+        "supports_speech_output": False,
+        "context_window": 131072,
+        "max_output_tokens": 8192,
+        "access_class": ModelAccessClass.UNKNOWN.value,
+        "free_tier_limit_metadata": None,
+        "terms_url": "https://groq.com/terms-of-use",
+        "pricing_url": "https://groq.com/pricing",
+        "last_pricing_verified_at": None,
+        "is_default": False,
+        "is_enabled": False,
+    },
+]
+
+
 def seed_ai_provider_catalogue(
     session: Session,
     actor_user_id: UUID | None = None,
@@ -344,6 +454,7 @@ def seed_ai_provider_catalogue(
     models_created = 0
 
     gemini_provider_id: UUID | None = None
+    groq_provider_id: UUID | None = None
 
     for item in INITIAL_PROVIDERS_DATA:
         code = item["code"]
@@ -357,6 +468,8 @@ def seed_ai_provider_catalogue(
             existing.priority = item["priority"]
             if code == "google_gemini":
                 gemini_provider_id = existing.id
+            elif code == "groq":
+                groq_provider_id = existing.id
             providers_updated += 1
         else:
             provider = AIProvider(
@@ -373,6 +486,8 @@ def seed_ai_provider_catalogue(
             session.flush()
             if code == "google_gemini":
                 gemini_provider_id = provider.id
+            elif code == "groq":
+                groq_provider_id = provider.id
             providers_created += 1
 
     session.flush()
@@ -386,6 +501,21 @@ def seed_ai_provider_catalogue(
             )
         ).all()
         for rm in retired_models:
+            if rm.is_enabled:
+                rm.is_enabled = False
+            if rm.is_default:
+                rm.is_default = False
+            if "[RETIRED" not in (rm.description or ""):
+                rm.description = f"{rm.description or ''} [RETIRED / DEPRECATED]".strip()
+
+    if groq_provider_id:
+        retired_groq = session.scalars(
+            select(AIModel).where(
+                AIModel.provider_id == groq_provider_id,
+                AIModel.model_identifier.in_(RETIRED_GROQ_MODEL_IDENTIFIERS),
+            )
+        ).all()
+        for rm in retired_groq:
             if rm.is_enabled:
                 rm.is_enabled = False
             if rm.is_default:
@@ -461,6 +591,79 @@ def seed_ai_provider_catalogue(
                 models_created += 1
                 if should_be_default:
                     has_current_default = True
+
+    # Seed baseline Groq models (candidate catalogue, provider remains PLANNED)
+    if groq_provider_id:
+        has_current_groq_default = session.scalar(
+            select(AIModel.id).where(
+                AIModel.provider_id == groq_provider_id,
+                AIModel.is_default.is_(True),
+            ).limit(1)
+        ) is not None
+
+        for model_data in INITIAL_GROQ_MODELS:
+            identifier = model_data["model_identifier"]
+            existing_model = session.scalar(
+                select(AIModel).where(
+                    AIModel.provider_id == groq_provider_id,
+                    AIModel.model_identifier == identifier,
+                )
+            )
+            if existing_model:
+                existing_model.display_name = model_data["display_name"]
+                existing_model.description = model_data["description"]
+                existing_model.supports_text = model_data["supports_text"]
+                existing_model.supports_vision = model_data["supports_vision"]
+                existing_model.supports_tools = model_data["supports_tools"]
+                existing_model.supports_streaming = model_data["supports_streaming"]
+                existing_model.supports_json_mode = model_data["supports_json_mode"]
+                existing_model.supports_embeddings = model_data["supports_embeddings"]
+                existing_model.supports_speech_input = model_data["supports_speech_input"]
+                existing_model.supports_speech_output = model_data["supports_speech_output"]
+                existing_model.context_window = model_data["context_window"]
+                existing_model.max_output_tokens = model_data["max_output_tokens"]
+                existing_model.access_class = model_data["access_class"]
+                existing_model.free_tier_limit_metadata = model_data.get("free_tier_limit_metadata")
+                existing_model.terms_url = model_data["terms_url"]
+                existing_model.pricing_url = model_data["pricing_url"]
+                existing_model.last_pricing_verified_at = model_data["last_pricing_verified_at"]
+                if identifier in {"llama-3.3-70b-versatile", "llama-3.1-8b-instant"}:
+                    existing_model.is_enabled = False
+                    existing_model.is_default = False
+                    existing_model.access_class = ModelAccessClass.UNKNOWN.value
+                    if "[ENTERPRISE_RESTRICTED]" not in (existing_model.description or ""):
+                        existing_model.description = f"[ENTERPRISE_RESTRICTED] {existing_model.description or ''}".strip()
+            else:
+                should_be_default = model_data["is_default"] and not has_current_groq_default
+                model = AIModel(
+                    provider_id=groq_provider_id,
+                    model_identifier=identifier,
+                    display_name=model_data["display_name"],
+                    description=model_data["description"],
+                    supports_text=model_data["supports_text"],
+                    supports_vision=model_data["supports_vision"],
+                    supports_tools=model_data["supports_tools"],
+                    supports_streaming=model_data["supports_streaming"],
+                    supports_json_mode=model_data["supports_json_mode"],
+                    supports_embeddings=model_data["supports_embeddings"],
+                    supports_speech_input=model_data["supports_speech_input"],
+                    supports_speech_output=model_data["supports_speech_output"],
+                    context_window=model_data["context_window"],
+                    max_output_tokens=model_data["max_output_tokens"],
+                    pricing_input_per_million=None,
+                    pricing_output_per_million=None,
+                    access_class=model_data["access_class"],
+                    free_tier_limit_metadata=model_data.get("free_tier_limit_metadata"),
+                    is_default=should_be_default,
+                    is_enabled=model_data["is_enabled"],
+                    terms_url=model_data["terms_url"],
+                    pricing_url=model_data["pricing_url"],
+                    last_pricing_verified_at=model_data["last_pricing_verified_at"],
+                )
+                session.add(model)
+                models_created += 1
+                if should_be_default:
+                    has_current_groq_default = True
 
     session.flush()
 

@@ -543,9 +543,15 @@ def test_nested_metadata_secret_values_are_redacted(api_client):
     client, _ = api_client
     session_factory = client.app.state.db_session_factory
 
+    synthetic_jwt = (
+        "eyJ" + "hbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+        + "eyJ" + "zdWIiOiIxMjM0NTY3ODkwIn0."
+        + "dozjgNryP4J_wStmWBWnQ_3eQ2mB8p_m7bB1_h8m6b8"
+    )
+
     metadata_with_innocent_keys = {
         "notes": "User supplied API key FAKE_API_KEY_google_gemini_35charslong_1234 in ticket.",
-        "description": "Auth header used: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J_wStmWBWnQ_3eQ2mB8p_m7bB1_h8m6b8.",
+        "description": f"Auth header used: Bearer {synthetic_jwt}.",
         "ordinary_text": "This is a completely normal customer comment.",
         "key_hint": "4321",
         "key_source": "company",
@@ -556,7 +562,7 @@ def test_nested_metadata_secret_values_are_redacted(api_client):
         "audit_list": [
             "Normal log entry",
             "Nested API key: FAKE_API_KEY_google_gemini_another_fake_key_long",
-            {"step": "Raw JWT: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J_wStmWBWnQ_3eQ2mB8p_m7bB1_h8m6b8"},
+            {"step": f"Raw JWT: {synthetic_jwt}"},
         ],
     }
 

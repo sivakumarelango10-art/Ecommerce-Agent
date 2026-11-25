@@ -87,6 +87,24 @@ class ProviderAdapterUnavailableError(AIProviderError):
         )
 
 
+class ProviderTrafficNotPermittedError(AIProviderError):
+    """Raised when a provider has an operational adapter registered, but its catalogue status (e.g. PLANNED) does not permit ordinary customer traffic."""
+
+    def __init__(self, provider_code: str, connection_status: str | None = None) -> None:
+        msg = (
+            f"AI provider '{provider_code}' (catalogue status: {connection_status or 'UNKNOWN'}) "
+            "is not permitted for customer traffic. Only providers with 'AVAILABLE' status "
+            "are permitted for production customer routing."
+        )
+        super().__init__(
+            msg,
+            provider_code=provider_code,
+            status_code=403,
+            is_retryable=False,
+            error_category="TRAFFIC_NOT_PERMITTED",
+        )
+
+
 class ProviderRuntimeResolver:
     """Central resolver that verifies provider and model metadata before selecting an adapter.
 
@@ -123,17 +141,61 @@ class ProviderRuntimeResolver:
         """List provider codes currently registered in memory."""
         return sorted(self._adapters.keys())
 
+    def get_provider_lifecycle_state(
+        self,
+        session: Session,
+        provider_code: str,
+    ) -> dict[str, Any]:
+        """Inspect and return distinct lifecycle states for a provider:
+        1. adapter_registered: In-memory runtime adapter exists
+        2. metadata_enabled: Database AIProvider is_enabled == True
+        3. metadata_validated: Database AIProvider record exists and is valid
+        4. is_operational: Adapter is registered AND metadata is enabled
+        5. customer_traffic_permitted: is_operational AND connection_status == 'AVAILABLE'
+        """
+        provider = session.scalar(
+            select(AIProvider).where(AIProvider.code == provider_code)
+        )
+        adapter_registered = self.has_adapter(provider_code)
+        if provider is None:
+            return {
+                "provider_code": provider_code,
+                "metadata_validated": False,
+                "metadata_enabled": False,
+                "connection_status": None,
+                "adapter_registered": adapter_registered,
+                "is_operational": False,
+                "customer_traffic_permitted": False,
+            }
+
+        is_operational = adapter_registered and provider.is_enabled
+        customer_traffic_permitted = is_operational and (provider.connection_status == "AVAILABLE")
+
+        return {
+            "provider_code": provider_code,
+            "metadata_validated": True,
+            "metadata_enabled": provider.is_enabled,
+            "connection_status": provider.connection_status,
+            "adapter_registered": adapter_registered,
+            "is_operational": is_operational,
+            "customer_traffic_permitted": customer_traffic_permitted,
+        }
+
     def resolve(
         self,
         session: Session,
         provider_code: str,
         model_name: str | None = None,
     ) -> tuple[AIProviderAdapter, AIModel | None]:
-        """Resolve adapter and model synchronously against database metadata.
+        """Resolve adapter and model synchronously for production customer traffic.
+
+        Strictly enforces that the provider has 'AVAILABLE' connection status in the
+        catalogue. No bypass parameter is exposed on this production method.
 
         Returns (adapter, model_or_none).
         Raises UnknownProviderError, DisabledProviderError, UnknownModelError,
-               DisabledModelError, or ProviderAdapterUnavailableError.
+               DisabledModelError, ProviderAdapterUnavailableError, or
+               ProviderTrafficNotPermittedError.
         """
         # 1. Verify Provider metadata in DB
         provider = session.scalar(
@@ -178,6 +240,13 @@ class ProviderRuntimeResolver:
                 connection_status=provider.connection_status,
             )
 
+        # 4. Strictly enforce customer traffic permission gate (AVAILABLE only)
+        if provider.connection_status != "AVAILABLE":
+            raise ProviderTrafficNotPermittedError(
+                provider_code,
+                connection_status=provider.connection_status,
+            )
+
         return adapter, model_record
 
     async def resolve_async(
@@ -186,7 +255,11 @@ class ProviderRuntimeResolver:
         provider_code: str,
         model_name: str | None = None,
     ) -> tuple[AIProviderAdapter, AIModel | None]:
-        """Resolve adapter and model asynchronously against database metadata."""
+        """Resolve adapter and model asynchronously for production customer traffic.
+
+        Strictly enforces that the provider has 'AVAILABLE' connection status in the
+        catalogue. No bypass parameter is exposed on this production method.
+        """
         # 1. Verify Provider metadata in DB
         stmt_p = select(AIProvider).where(AIProvider.code == provider_code)
         res_p = await session.execute(stmt_p)
@@ -227,6 +300,13 @@ class ProviderRuntimeResolver:
         adapter = self._adapters.get(provider_code)
         if adapter is None:
             raise ProviderAdapterUnavailableError(
+                provider_code,
+                connection_status=provider.connection_status,
+            )
+
+        # 4. Strictly enforce customer traffic permission gate (AVAILABLE only)
+        if provider.connection_status != "AVAILABLE":
+            raise ProviderTrafficNotPermittedError(
                 provider_code,
                 connection_status=provider.connection_status,
             )

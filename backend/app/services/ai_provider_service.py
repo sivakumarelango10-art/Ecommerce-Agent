@@ -39,6 +39,11 @@ from backend.app.services.admin_audit_service import record_admin_audit_event
 logger = logging.getLogger(__name__)
 
 # Disallowed internal, loopback, and cloud metadata destinations
+RESTRICTED_ENTERPRISE_MODEL_IDENTIFIERS: frozenset[str] = frozenset({
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+})
+
 _DISALLOWED_HOSTS = {
     "localhost",
     "127.0.0.1",
@@ -407,6 +412,27 @@ def create_model(
         raise AIProviderNotFoundError(f"Provider with ID '{payload.provider_id}' not found.")
 
     clean_identifier = payload.model_identifier.strip()
+    if clean_identifier.lower() in RESTRICTED_ENTERPRISE_MODEL_IDENTIFIERS:
+        if payload.is_enabled:
+            raise AIProviderServiceError(
+                f"Model '{clean_identifier}' is enterprise-restricted on Groq and cannot be created as enabled "
+                "because StoreFlow has no verified contractual committed-spend enterprise entitlement."
+            )
+        if payload.is_default:
+            raise AIProviderServiceError(
+                f"Model '{clean_identifier}' is enterprise-restricted on Groq and cannot be created as default."
+            )
+        if payload.access_class.strip().upper() != "UNKNOWN":
+            raise AIProviderServiceError(
+                f"Model '{clean_identifier}' is enterprise-restricted on Groq; access class cannot be "
+                f"'{payload.access_class}'. Access class must remain 'UNKNOWN' without a verified enterprise contract."
+            )
+        if not payload.description or "[ENTERPRISE_RESTRICTED]" not in payload.description:
+            raise AIProviderServiceError(
+                f"Model '{clean_identifier}' is enterprise-restricted on Groq; description must contain "
+                "'[ENTERPRISE_RESTRICTED]' designation."
+            )
+
     existing = session.scalar(
         select(AIModel).where(
             AIModel.provider_id == payload.provider_id,
@@ -482,6 +508,28 @@ def update_model(
     model = get_model(session, model_id)
     if not model:
         raise AIModelNotFoundError(f"Model with ID '{model_id}' not found.")
+
+    clean_id = (model.model_identifier or "").strip().lower()
+    if clean_id in RESTRICTED_ENTERPRISE_MODEL_IDENTIFIERS:
+        if payload.is_enabled is True:
+            raise AIProviderServiceError(
+                f"Model '{model.model_identifier}' is enterprise-restricted on Groq and cannot be enabled "
+                "because StoreFlow has no verified contractual committed-spend enterprise entitlement."
+            )
+        if payload.is_default is True:
+            raise AIProviderServiceError(
+                f"Model '{model.model_identifier}' is enterprise-restricted on Groq and cannot be set as default."
+            )
+        if payload.access_class is not None and payload.access_class.strip().upper() != "UNKNOWN":
+            raise AIProviderServiceError(
+                f"Model '{model.model_identifier}' is enterprise-restricted on Groq; access class cannot be changed "
+                f"to '{payload.access_class}'. Access class must remain 'UNKNOWN' without a verified enterprise contract."
+            )
+        if payload.description is not None and "[ENTERPRISE_RESTRICTED]" not in payload.description:
+            raise AIProviderServiceError(
+                f"Model '{model.model_identifier}' is enterprise-restricted on Groq; description must retain "
+                "the '[ENTERPRISE_RESTRICTED]' designation."
+            )
 
     if payload.is_default is True and not model.is_default:
         session.query(AIModel).filter(

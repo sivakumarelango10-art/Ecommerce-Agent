@@ -600,7 +600,7 @@ def test_missing_production_smtp_configuration_fails_safely():
         GEMINI_API_KEY="test-key",
         DATABASE_URL="sqlite+pysqlite:///:memory:",
         AUTH_SECRET_KEY=TEST_AUTH_SECRET.get_secret_value(),
-        USER_KEY_ENCRYPTION_SECRET="test-key-encryption-secret-0123456789abcdef",
+        USER_KEY_ENCRYPTION_SECRET="test_encryption_secret_dummy_fixture_val",
         ENVIRONMENT="production",
         SMTP_HOST=None,
         SMTP_FROM_EMAIL=None,
@@ -618,7 +618,7 @@ def test_no_production_mock_fallback():
         GEMINI_API_KEY="test-key",
         DATABASE_URL="sqlite+pysqlite:///:memory:",
         AUTH_SECRET_KEY=TEST_AUTH_SECRET.get_secret_value(),
-        USER_KEY_ENCRYPTION_SECRET="test-key-encryption-secret-0123456789abcdef",
+        USER_KEY_ENCRYPTION_SECRET="test_encryption_secret_dummy_fixture_val",
         ENVIRONMENT="production",
     )
     with pytest.raises(

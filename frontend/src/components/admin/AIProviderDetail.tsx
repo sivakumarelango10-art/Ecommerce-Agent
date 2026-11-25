@@ -223,12 +223,23 @@ export const AIProviderDetail: React.FC<AIProviderDetailProps> = ({
                     <td className="py-3 px-3">
                       <div className="font-medium text-slate-900">{m.display_name}</div>
                       <div className="font-mono text-slate-400 text-[11px]">{m.model_identifier}</div>
+                      {m.description?.includes('[ENTERPRISE_RESTRICTED]') && (
+                        <div className="text-[10px] text-amber-800 font-medium mt-0.5">
+                          Enterprise committed-spend entitlement required (Unavailable in StoreFlow)
+                        </div>
+                      )}
                     </td>
                     <td className="py-3 px-3">
                       <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold ${
                         m.access_class === 'FREE_TIER'
                           ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                          : 'bg-blue-50 text-blue-700 border border-blue-200'
+                          : m.access_class === 'PAY_AS_YOU_GO'
+                          ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                          : m.access_class === 'PROMOTIONAL_CREDITS'
+                          ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                          : m.access_class === 'SELF_HOSTED'
+                          ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                          : 'bg-slate-100 text-slate-700 border border-slate-300'
                       }`}>
                         {m.access_class}
                       </span>

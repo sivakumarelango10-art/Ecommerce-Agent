@@ -27,6 +27,9 @@ from backend.app.db.session import create_database_engine, create_session_factor
 from backend.app.services.email_service import EmailDeliveryProvider
 from backend.app.services.gemini_service import GeminiService
 from backend.app.services.outbox_worker import GuestEmailOutboxWorker
+from backend.app.services.providers.gemini_adapter import GeminiProviderAdapter
+from backend.app.services.providers.groq_adapter import GroqProviderAdapter
+from backend.app.services.providers.resolver import ProviderRuntimeResolver
 from backend.app.services.shipping_tax_policy import PolicyConfigurationError
 
 logger = logging.getLogger(__name__)
@@ -77,6 +80,21 @@ def create_app(
         app.state.db_engine = engine
         app.state.db_session_factory = create_session_factory(engine)
         app.state.gemini_service = service
+
+        # Provider Runtime Resolver
+        resolver = ProviderRuntimeResolver()
+        gemini_adapter = GeminiProviderAdapter(
+            service,
+            settings=settings,
+            default_model=settings.gemini_model,
+        )
+        resolver.register_adapter(gemini_adapter)
+        try:
+            groq_adapter = GroqProviderAdapter()
+            resolver.register_adapter(groq_adapter)
+        except Exception:
+            pass
+        app.state.provider_resolver = resolver
 
         worker = None
         worker_enabled = (

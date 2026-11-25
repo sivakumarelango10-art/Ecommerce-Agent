@@ -61,7 +61,7 @@ from backend.app.services.providers.resolver import (
 )
 from backend.app.services.providers.security import (
     DEFAULT_OUTBOUND_TIMEOUT_SECONDS,
-    DISALLOW_REDIRECTS,
+    FOLLOW_REDIRECTS,
     MAX_SAFE_RESPONSE_BYTES,
     mask_sensitive_token,
     validate_provider_endpoint,
@@ -722,7 +722,7 @@ def test_security_constants() -> None:
     """Security defaults enforce timeout, redirect disabling, and response limits."""
     assert MAX_SAFE_RESPONSE_BYTES == 10 * 1024 * 1024  # 10 MB limit
     assert DEFAULT_OUTBOUND_TIMEOUT_SECONDS == 30.0
-    assert DISALLOW_REDIRECTS is False  # Must not follow redirects
+    assert FOLLOW_REDIRECTS is False  # Must not follow redirects
 
 
 # ---------------------------------------------------------------------------

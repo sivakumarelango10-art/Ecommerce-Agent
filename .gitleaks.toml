@@ -1,14 +1,2 @@
 [extend]
 useDefault = true
-
-[allowlist]
-description = "Global allowlist for synthetic test fixtures and safe examples"
-paths = [
-  '''^\.env\.example$''',
-  '''^backend/tests/.*''',
-  '''^frontend/src/__tests__/.*'''
-]
-regexes = [
-  '''test-only-fake-[a-z0-9_-]+''',
-  '''FAKE_API_KEY_[a-zA-Z0-9_-]+'''
-]

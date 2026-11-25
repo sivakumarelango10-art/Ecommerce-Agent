@@ -1,0 +1,24 @@
+# Gitleaks fingerprint ignore file for confirmed historical test fixtures
+# Generated for StoreFlow SEC-1.4 audit
+
+9c7ebae35804891954c2481992554993404a945c:backend/tests/test_guest_order_verification.py:generic-api-key:603
+9c7ebae35804891954c2481992554993404a945c:backend/tests/test_guest_order_verification.py:generic-api-key:621
+9c7ebae35804891954c2481992554993404a945c:frontend/src/__tests__/api_client.test.ts:generic-api-key:308
+9c7ebae35804891954c2481992554993404a945c:frontend/src/__tests__/api_client.test.ts:generic-api-key:379
+9c7ebae35804891954c2481992554993404a945c:backend/tests/test_gemini_key_encryption.py:generic-api-key:40
+9c7ebae35804891954c2481992554993404a945c:backend/tests/test_gemini_key_encryption.py:generic-api-key:41
+9c7ebae35804891954c2481992554993404a945c:backend/tests/test_gemini_key_encryption.py:generic-api-key:67
+9c7ebae35804891954c2481992554993404a945c:backend/tests/test_gemini_key_encryption.py:generic-api-key:81
+9c7ebae35804891954c2481992554993404a945c:backend/tests/test_gemini_key_encryption.py:generic-api-key:133
+9c7ebae35804891954c2481992554993404a945c:backend/tests/test_gemini_key_encryption.py:gcp-api-key:30
+a0bdebb8cf04dd0889edc0930bb4240b837a53e3:backend/tests/test_database_migrations.py:generic-api-key:144
+9c7ebae35804891954c2481992554993404a945c:backend/tests/test_gemini_service.py:generic-api-key:229
+9c7ebae35804891954c2481992554993404a945c:backend/tests/test_gemini_key_management.py:generic-api-key:178
+9c7ebae35804891954c2481992554993404a945c:backend/tests/test_gemini_key_management.py:generic-api-key:191
+9c7ebae35804891954c2481992554993404a945c:backend/tests/test_gemini_key_management.py:generic-api-key:256
+9c7ebae35804891954c2481992554993404a945c:backend/tests/test_gemini_key_management.py:generic-api-key:334
+9c7ebae35804891954c2481992554993404a945c:backend/tests/test_gemini_key_management.py:generic-api-key:439
+9c7ebae35804891954c2481992554993404a945c:backend/tests/test_gemini_key_management.py:generic-api-key:473
+9c7ebae35804891954c2481992554993404a945c:backend/tests/test_gemini_key_management.py:generic-api-key:476
+9c7ebae35804891954c2481992554993404a945c:backend/tests/test_gemini_key_management.py:generic-api-key:528
+9c7ebae35804891954c2481992554993404a945c:backend/tests/test_admin_auth.py:jwt:559

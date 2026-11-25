@@ -270,6 +270,13 @@ class GeminiProviderAdapter(AIProviderAdapter):
                     total_tokens=total_tokens,
                 )
 
+        resp_metadata = dict(request.metadata)
+        if isinstance(self._service, RequestScopedGeminiService) and (
+            getattr(self._service, "_session_factory", None) is not None
+            or getattr(self._service, "session_factory", None) is not None
+        ):
+            resp_metadata["telemetry_recorded"] = True
+
         return GenerationResponse(
             text=result.text,
             function_calls=result.function_calls,
@@ -278,7 +285,7 @@ class GeminiProviderAdapter(AIProviderAdapter):
             model=model_name,
             provider=self.provider_code,
             latency_ms=latency_ms,
-            metadata=dict(request.metadata),
+            metadata=resp_metadata,
         )
 
     def generate_text(self, prompt: str, model: str | None = None, **kwargs: Any) -> str:

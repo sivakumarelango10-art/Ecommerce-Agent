@@ -1020,14 +1020,14 @@ def test_super_admin_can_mutate_ai_registry(api_client):
     groq_provider = [p for p in providers_res.json() if p["code"] == "groq"][0]
     provider_id = groq_provider["id"]
 
-    # 3. Create model for groq
+    # 3. Create custom model for groq
     create_m_res = client.post(
         "/api/v1/admin/ai/models",
         headers=headers,
         json={
             "provider_id": provider_id,
-            "model_identifier": "llama-3.3-70b-versatile",
-            "display_name": "Llama 3.3 70B Versatile",
+            "model_identifier": "custom-groq-admin-model",
+            "display_name": "Custom Groq Admin Model",
             "access_class": "PAY_AS_YOU_GO",
             "context_window": 128000,
         },
@@ -1338,3 +1338,209 @@ def test_paid_pricing_separate_from_free_tier_eligibility(api_client):
         assert model.access_class == ModelAccessClass.FREE_TIER.value
         assert model.free_tier_limit_metadata["is_free_tier_available"] is True
         assert model.free_tier_limit_metadata["data_use_conditions"]["paid_tier_training_use"] is False
+
+
+def test_groq_enterprise_restricted_models_seeded_with_unknown_access_class(api_client) -> None:
+    """Enterprise-restricted Groq models are seeded with UNKNOWN access class, disabled, and non-default."""
+    client, _ = api_client
+    session_factory = client.app.state.db_session_factory
+
+    with session_factory() as session:
+        seed_ai_provider_catalogue(session)
+        session.commit()
+
+        groq_provider = session.scalar(select(AIProvider).where(AIProvider.code == "groq"))
+        assert groq_provider is not None
+        assert groq_provider.connection_status == ProviderConnectionStatus.PLANNED.value
+
+        groq_models = {
+            m.model_identifier: m
+            for m in session.scalars(select(AIModel).where(AIModel.provider_id == groq_provider.id)).all()
+        }
+
+        # Enterprise-restricted models
+        for restricted_id in ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]:
+            assert restricted_id in groq_models
+            model = groq_models[restricted_id]
+            assert model.access_class == ModelAccessClass.UNKNOWN.value
+            assert model.is_enabled is False
+            assert model.is_default is False
+            assert "[ENTERPRISE_RESTRICTED]" in model.description
+
+        # Open weights candidate models maintain PAY_AS_YOU_GO
+        assert groq_models["openai/gpt-oss-120b"].access_class == ModelAccessClass.PAY_AS_YOU_GO.value
+        assert groq_models["openai/gpt-oss-20b"].access_class == ModelAccessClass.PAY_AS_YOU_GO.value
+
+        # Gemini models maintain FREE_TIER
+        gemini_provider = session.scalar(select(AIProvider).where(AIProvider.code == "google_gemini"))
+        gemini_models = {
+            m.model_identifier: m
+            for m in session.scalars(select(AIModel).where(AIModel.provider_id == gemini_provider.id)).all()
+        }
+        assert gemini_models["gemini-3.8-flash"].access_class == ModelAccessClass.FREE_TIER.value
+        assert gemini_models["gemini-3.5-flash-lite"].access_class == ModelAccessClass.FREE_TIER.value
+
+
+def test_admin_direct_api_mutation_rejected_for_enterprise_restricted_models(api_client) -> None:
+    """Super-admin and admin direct API requests attempting to activate or modify enterprise-restricted models are rejected."""
+    client, _ = api_client
+    session_factory = client.app.state.db_session_factory
+
+    with session_factory() as session:
+        _, super_token = create_user_with_role(
+            session=session,
+            settings=client.app.state.settings,
+            email="super_admin_restrict_test@example.com",
+            role="super_admin",
+        )
+        _, admin_token = create_user_with_role(
+            session=session,
+            settings=client.app.state.settings,
+            email="regular_admin_restrict_test@example.com",
+            role="admin",
+        )
+
+    super_headers = auth_header(super_token)
+    admin_headers = auth_header(admin_token)
+
+    # 1. Seed catalogue
+    seed_res = client.post("/api/v1/admin/ai/catalogue/seed", headers=super_headers)
+    assert seed_res.status_code == 200
+
+    # 2. Retrieve models and find restricted ones
+    models_res = client.get("/api/v1/admin/ai/models", headers=super_headers)
+    assert models_res.status_code == 200
+    models_by_identifier = {m["model_identifier"]: m for m in models_res.json()}
+
+    restricted_identifiers = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+
+    for model_id_name in restricted_identifiers:
+        assert model_id_name in models_by_identifier
+        target_model = models_by_identifier[model_id_name]
+        uuid_str = target_model["id"]
+
+        # Initial baseline verification
+        assert target_model["is_enabled"] is False
+        assert target_model["is_default"] is False
+        assert target_model["access_class"] == "UNKNOWN"
+        assert "[ENTERPRISE_RESTRICTED]" in target_model["description"]
+
+        # a) Super-admin direct API request to enable model -> REJECTED (400)
+        res_enable = client.patch(
+            f"/api/v1/admin/ai/models/{uuid_str}",
+            headers=super_headers,
+            json={"is_enabled": True},
+        )
+        assert res_enable.status_code == 400
+        assert "enterprise-restricted on Groq and cannot be enabled" in res_enable.json()["detail"]
+
+        # b) Super-admin direct API request to set as default -> REJECTED (400)
+        res_default = client.patch(
+            f"/api/v1/admin/ai/models/{uuid_str}",
+            headers=super_headers,
+            json={"is_default": True},
+        )
+        assert res_default.status_code == 400
+        assert "cannot be set as default" in res_default.json()["detail"]
+
+        # c) Super-admin direct API request to change access_class to PAY_AS_YOU_GO -> REJECTED (400)
+        res_access = client.patch(
+            f"/api/v1/admin/ai/models/{uuid_str}",
+            headers=super_headers,
+            json={"access_class": "PAY_AS_YOU_GO"},
+        )
+        assert res_access.status_code == 400
+        assert "access class cannot be changed" in res_access.json()["detail"]
+        assert "must remain 'UNKNOWN'" in res_access.json()["detail"]
+
+        # d) Super-admin direct API request to strip [ENTERPRISE_RESTRICTED] from description -> REJECTED (400)
+        res_desc = client.patch(
+            f"/api/v1/admin/ai/models/{uuid_str}",
+            headers=super_headers,
+            json={"description": "Unrestricted general availability Llama model"},
+        )
+        assert res_desc.status_code == 400
+        assert "description must retain the '[ENTERPRISE_RESTRICTED]' designation" in res_desc.json()["detail"]
+
+        # e) Super-admin combined bypass payload -> REJECTED (400)
+        res_combined = client.patch(
+            f"/api/v1/admin/ai/models/{uuid_str}",
+            headers=super_headers,
+            json={
+                "is_enabled": True,
+                "is_default": True,
+                "access_class": "PAY_AS_YOU_GO",
+                "description": "Clean unrestricted model description",
+            },
+        )
+        assert res_combined.status_code == 400
+
+        # f) Regular admin request to enable -> REJECTED by RBAC (403)
+        res_admin_rbac = client.patch(
+            f"/api/v1/admin/ai/models/{uuid_str}",
+            headers=admin_headers,
+            json={"is_enabled": True},
+        )
+        assert res_admin_rbac.status_code == 403
+
+        # g) Verify state in database remained UNCHANGED (immutable and protected)
+        get_res = client.get(f"/api/v1/admin/ai/models/{uuid_str}", headers=super_headers)
+        assert get_res.status_code == 200
+        verified = get_res.json()
+        assert verified["is_enabled"] is False
+        assert verified["is_default"] is False
+        assert verified["access_class"] == "UNKNOWN"
+        assert "[ENTERPRISE_RESTRICTED]" in verified["description"]
+
+
+def test_unrestricted_models_administration_still_works(api_client) -> None:
+    """Super-admin can manage ordinary unrestricted models without interference."""
+    client, _ = api_client
+    session_factory = client.app.state.db_session_factory
+
+    with session_factory() as session:
+        _, super_token = create_user_with_role(
+            session=session,
+            settings=client.app.state.settings,
+            email="super_admin_unrestricted_test@example.com",
+            role="super_admin",
+        )
+
+    super_headers = auth_header(super_token)
+
+    # 1. Seed catalogue
+    client.post("/api/v1/admin/ai/catalogue/seed", headers=super_headers)
+
+    # 2. Retrieve models
+    models_res = client.get("/api/v1/admin/ai/models", headers=super_headers)
+    models = {m["model_identifier"]: m for m in models_res.json()}
+
+    # 3. Patch an unrestricted Groq model (openai/gpt-oss-120b)
+    gpt_120b = models["openai/gpt-oss-120b"]
+    patch_res = client.patch(
+        f"/api/v1/admin/ai/models/{gpt_120b['id']}",
+        headers=super_headers,
+        json={"context_window": 130000},
+    )
+    assert patch_res.status_code == 200
+    assert patch_res.json()["context_window"] == 130000
+
+    # 4. Patch an unrestricted Gemini model (gemini-3.5-flash-lite)
+    gemini_lite = models["gemini-3.5-flash-lite"]
+    # Disable it
+    patch_disable = client.patch(
+        f"/api/v1/admin/ai/models/{gemini_lite['id']}",
+        headers=super_headers,
+        json={"is_enabled": False},
+    )
+    assert patch_disable.status_code == 200
+    assert patch_disable.json()["is_enabled"] is False
+
+    # Re-enable it
+    patch_enable = client.patch(
+        f"/api/v1/admin/ai/models/{gemini_lite['id']}",
+        headers=super_headers,
+        json={"is_enabled": True},
+    )
+    assert patch_enable.status_code == 200
+    assert patch_enable.json()["is_enabled"] is True
