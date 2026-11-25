@@ -9,11 +9,13 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
+from backend.app.api.routes.admin import router as admin_router
 from backend.app.api.routes.auth import router as auth_router
 from backend.app.api.routes.cart import router as cart_router
 from backend.app.api.routes.catalog import router as catalog_router
 from backend.app.api.routes.checkout import router as checkout_router
 from backend.app.api.routes.customers import router as customers_router
+from backend.app.api.routes.gemini_settings import router as gemini_settings_router
 from backend.app.api.routes.health import router as health_router
 from backend.app.api.routes.neon import router as neon_router
 from backend.app.api.routes.orders import router as orders_router
@@ -26,6 +28,9 @@ from backend.app.db.session import create_database_engine, create_session_factor
 from backend.app.services.email_service import EmailDeliveryProvider
 from backend.app.services.gemini_service import GeminiService
 from backend.app.services.outbox_worker import GuestEmailOutboxWorker
+from backend.app.services.providers.gemini_adapter import GeminiProviderAdapter
+from backend.app.services.providers.groq_adapter import GroqProviderAdapter
+from backend.app.services.providers.resolver import ProviderRuntimeResolver
 from backend.app.services.shipping_tax_policy import PolicyConfigurationError
 
 logger = logging.getLogger(__name__)
@@ -77,6 +82,21 @@ def create_app(
         app.state.db_session_factory = create_session_factory(engine)
         app.state.gemini_service = service
 
+        # Provider Runtime Resolver
+        resolver = ProviderRuntimeResolver()
+        gemini_adapter = GeminiProviderAdapter(
+            service,
+            settings=settings,
+            default_model=settings.gemini_model,
+        )
+        resolver.register_adapter(gemini_adapter)
+        try:
+            groq_adapter = GroqProviderAdapter()
+            resolver.register_adapter(groq_adapter)
+        except Exception:
+            pass
+        app.state.provider_resolver = resolver
+
         worker = None
         worker_enabled = (
             outbox_worker_enabled
@@ -123,7 +143,9 @@ def create_app(
     application.include_router(health_router)
     application.include_router(neon_router, prefix="/api/v1")
     application.include_router(auth_router, prefix="/api/v1")
+    application.include_router(admin_router, prefix="/api/v1")
     application.include_router(customers_router, prefix="/api/v1")
+    application.include_router(gemini_settings_router, prefix="/api/v1")
     application.include_router(catalog_router, prefix="/api/v1")
     application.include_router(cart_router, prefix="/api/v1")
     application.include_router(checkout_router, prefix="/api/v1")

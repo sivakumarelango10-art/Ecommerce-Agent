@@ -11,6 +11,36 @@ from backend.app.schemas.shopping import SortOrder
 logger = logging.getLogger(__name__)
 
 
+def get_term_search_variants(term: str) -> set[str]:
+    """Generate search variants for a term (handling singular/plural and hyphen/space inflections)."""
+    clean = term.strip().lower()
+    if not clean:
+        return set()
+    variants = {clean}
+    if "-" in clean:
+        variants.add(clean.replace("-", " "))
+    if " " in clean:
+        variants.add(clean.replace(" ", "-"))
+
+    # Plural to singular normalization
+    if clean.endswith("ies") and len(clean) > 4:
+        variants.add(clean[:-3] + "y")
+    elif clean.endswith("es") and len(clean) > 3 and clean[-3] in {"h", "s", "x", "z"}:
+        variants.add(clean[:-2])
+    elif clean.endswith("s") and not clean.endswith("ss") and len(clean) > 3:
+        variants.add(clean[:-1])
+    else:
+        # Singular to plural normalization
+        if clean.endswith("y") and len(clean) > 2 and clean[-2] not in "aeiou":
+            variants.add(clean[:-1] + "ies")
+        elif clean.endswith(("ch", "sh", "x", "z", "s")):
+            variants.add(clean + "es")
+        else:
+            variants.add(clean + "s")
+
+    return variants
+
+
 def search_catalogue_products(
     session: Session,
     *,
@@ -79,13 +109,12 @@ def search_catalogue_products(
     if terms:
         term_conditions = []
         for term in terms:
-            term_clean = term.lower()
-            term_conditions.append(
-                or_(
-                    func.lower(Product.name).contains(term_clean),
-                    func.lower(Product.description).contains(term_clean),
-                )
-            )
+            variants = get_term_search_variants(term)
+            variant_matchers = []
+            for v in variants:
+                variant_matchers.append(func.lower(Product.name).contains(v))
+                variant_matchers.append(func.lower(Product.description).contains(v))
+            term_conditions.append(or_(*variant_matchers))
         base_query = base_query.where(and_(*term_conditions))
 
     # Total count query

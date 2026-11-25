@@ -1,7 +1,8 @@
-from decimal import Decimal, InvalidOperation
 import json
 import logging
 import re
+from collections.abc import Sequence
+from decimal import Decimal, InvalidOperation
 from typing import Protocol
 
 from sqlalchemy.orm import Session
@@ -58,19 +59,136 @@ Rules:
 1. Do not invent details. If a preference is not stated or implied, leave it as null or empty list.
 2. If the user message is too vague to search (e.g. "I want to buy something", "help me shop", "show me products"), set "is_ambiguous_or_insufficient": true and provide a helpful "clarification_message".
 3. Extract price limits accurately (e.g., "under ₹10,000" -> max_budget: 10000; "between 2000 and 5000" -> min_budget: 2000, max_budget: 5000).
-4. Output ONLY the raw JSON object, without markdown code blocks, explanation, or commentary.
+4. Extract only relevant product types, brand names, and key technical/functional attributes in "keywords" (e.g. ["wireless", "headphones"]). NEVER include conversational filler, quality words, or selection nouns in "keywords" (e.g. do NOT include "available", "option", "options", "best", "recommend", "product", "item"). If the user asks for available options, set "in_stock_only": true instead.
+5. Output ONLY the raw JSON object, without markdown code blocks, explanation, or commentary.
 """
 
 
-_SEARCH_STOP_WORDS = {
+_SEARCH_STOP_WORDS = frozenset({
+    # Common prepositions, conjunctions, articles
     "a", "an", "the", "and", "or", "in", "on", "at", "to", "for", "of", "with", "by",
-    "buy", "purchase", "shop", "shopping", "want", "need", "find", "search", "looking",
-    "look", "show", "get", "give", "me", "i", "we", "you", "he", "she", "it",
-    "some", "any", "something", "anything", "please", "item", "items", "product",
-    "products", "good", "best", "recommend", "under", "below", "above", "between",
-    "usd", "inr", "eur", "gbp", "cad", "aud", "jpy", "rupee", "rupees", "dollar",
-    "dollars", "euro", "euros", "pound", "pounds", "rs",
-}
+    "from", "into", "onto", "about", "around", "over", "under", "below", "above", "between",
+    "through", "during", "before", "after", "than", "up", "down", "out", "off", "near",
+
+    # Pronouns
+    "i", "me", "my", "myself", "we", "us", "our", "ours", "ourselves",
+    "you", "your", "yours", "yourself", "yourselves",
+    "he", "him", "his", "himself", "she", "her", "hers", "herself",
+    "it", "its", "itself", "they", "them", "their", "theirs", "themselves",
+    "this", "that", "these", "those", "what", "which", "who", "whom", "whose",
+
+    # Intent & conversational verbs
+    "buy", "buying", "buys", "bought",
+    "purchase", "purchasing", "purchases", "purchased",
+    "shop", "shopping", "shops", "shopped",
+    "want", "wants", "wanted", "wanting",
+    "need", "needs", "needed", "needing",
+    "find", "finds", "found", "finding",
+    "search", "searches", "searching", "searched",
+    "look", "looks", "looking", "looked",
+    "show", "shows", "showing", "showed",
+    "give", "gives", "giving", "gave",
+    "get", "gets", "getting", "got",
+    "tell", "tells", "telling", "told",
+    "help", "helps", "helping", "helped",
+    "recommend", "recommends", "recommending", "recommended", "recommendation", "recommendations",
+    "suggest", "suggests", "suggesting", "suggested", "suggestion", "suggestions",
+    "advise", "advises", "advising", "advised",
+    "order", "orders", "ordering", "ordered",
+    "please", "can", "could", "would", "should", "will", "shall", "may", "might", "must",
+    "is", "am", "are", "was", "were", "be", "been", "being", "have", "has", "had", "having", "do", "does", "did", "doing",
+
+    # Evaluative adjectives & qualifiers (non-technical)
+    "good", "better", "best",
+    "great", "fine", "nice", "top", "perfect", "ideal", "decent", "suitable", "proper",
+    "favorite", "favourite", "popular",
+    "cheap", "cheaper", "cheapest", "affordable", "budget", "economical", "inexpensive",
+    "expensive", "costly", "pricy", "pricey",
+
+    # Generic shopping selection / entity nouns
+    "available", "availability",
+    "stock", "stocks", "inventory",
+    "option", "options",
+    "choice", "choices",
+    "selection", "selections",
+    "alternative", "alternatives",
+    "item", "items",
+    "product", "products",
+    "thing", "things",
+    "one", "ones",
+    "deal", "deals",
+    "offer", "offers",
+    "variety", "range",
+
+    # Indefinite pronouns & general quantifiers
+    "some", "any", "something", "anything", "everything", "nothing",
+    "someone", "anyone", "everyone", "all", "both", "each", "few", "more", "most", "other", "others",
+
+    # Currency names & symbols
+    "usd", "inr", "eur", "gbp", "cad", "aud", "jpy", "cny",
+    "rupee", "rupees", "dollar", "dollars", "euro", "euros", "pound", "pounds", "yen", "cent", "cents",
+    "rs", "inr", "buck", "bucks",
+
+    # Price / metric nouns
+    "price", "prices", "pricing", "cost", "costs", "budget", "budgets",
+    "limit", "limits", "rate", "rates", "max", "maximum", "min", "minimum",
+    "value", "worth",
+
+    # Conversational adverbs & fillers
+    "also", "too", "as", "well", "like", "just", "only", "now", "here", "there",
+    "very", "really", "quite", "rather", "somewhat", "approx", "approximately", "around",
+})
+
+
+_KNOWN_MULTI_WORD_ATTRIBUTES: frozenset[str] = frozenset({
+    "noise cancelling",
+    "noise-cancelling",
+    "noise cancellation",
+    "battery life",
+    "fast charging",
+    "quick charge",
+    "water resistant",
+    "water resistance",
+    "wireless charging",
+    "active noise cancellation",
+    "ambient sound",
+    "touch controls",
+})
+
+
+def normalize_search_keywords(raw_keywords: Sequence[str] | None) -> list[str]:
+    """Clean and filter keywords, stripping conversational stopwords while preserving meaningful product terms."""
+    if not raw_keywords:
+        return []
+
+    cleaned: list[str] = []
+    seen: set[str] = set()
+
+    for item in raw_keywords:
+        if not item or not isinstance(item, str):
+            continue
+        trimmed = item.strip()
+        if not trimmed:
+            continue
+
+        item_lower = trimmed.lower()
+        if item_lower in _KNOWN_MULTI_WORD_ATTRIBUTES:
+            if item_lower not in seen:
+                seen.add(item_lower)
+                cleaned.append(trimmed)
+            continue
+
+        # Extract tokens while filtering out stopwords and pure numbers
+        tokens = [w for w in re.findall(r"\b[A-Za-z0-9_-]+\b", trimmed) if len(w) >= 2]
+        meaningful = [w for w in tokens if w.lower() not in _SEARCH_STOP_WORDS and not w.isdigit()]
+
+        for w in meaningful:
+            w_lower = w.lower()
+            if w_lower not in seen:
+                seen.add(w_lower)
+                cleaned.append(w)
+
+    return cleaned
 
 
 def _clean_json_text(text: str) -> str:
@@ -88,8 +206,16 @@ _CURRENCY_PREFIX_PATTERN = r"(?:[\$€£₹¥]|C\$|A\$|rs\.?|\b(?:usd|inr|eur|gb
 def _fallback_extract_intent(query: str) -> ShoppingIntent:
     """Deterministic fallback if Gemini returns unparseable content."""
     clean_query = query.strip()
-    raw_words = [w for w in re.findall(r"\b[A-Za-z0-9_-]+\b", clean_query) if len(w) > 2]
+    raw_words = [w for w in re.findall(r"\b[A-Za-z0-9_-]+\b", clean_query) if len(w) >= 2]
     words = [w for w in raw_words if w.lower() not in _SEARCH_STOP_WORDS and not w.isdigit()]
+    words = normalize_search_keywords(words)
+
+    # Check for availability / in-stock intent
+    in_stock_requested: bool | None = (
+        True
+        if re.search(r"\b(?:available|in[- ]stock|ready to ship)\b", clean_query, re.IGNORECASE)
+        else None
+    )
 
     # Currency extraction
     detected_currency: str | None = None
@@ -179,6 +305,7 @@ def _fallback_extract_intent(query: str) -> ShoppingIntent:
         min_budget=min_budget,
         max_budget=max_budget,
         currency=detected_currency,
+        in_stock_only=in_stock_requested,
         is_shopping_intent=True,
         is_ambiguous_or_insufficient=is_vague,
         clarification_message=(
@@ -232,6 +359,7 @@ class ShoppingAgent:
             json_text = _clean_json_text(raw_response)
             data = json.loads(json_text)
             intent = ShoppingIntent.model_validate(data)
+            intent.keywords = normalize_search_keywords(intent.keywords)
             logger.info(
                 "Shopping intent successfully extracted",
                 extra={
@@ -355,13 +483,15 @@ class ShoppingAgent:
             else (intent.max_budget if intent else None)
         )
         brand = request.brand or (intent.brand if intent else None)
-        keywords = list(request.keywords)
+        raw_keywords = list(request.keywords)
         if intent and intent.keywords:
             for kw in intent.keywords:
-                if kw not in keywords:
-                    keywords.append(kw)
-        if intent and intent.product_name and intent.product_name not in keywords:
-            keywords.append(intent.product_name)
+                if kw not in raw_keywords:
+                    raw_keywords.append(kw)
+        if intent and intent.product_name and intent.product_name not in raw_keywords:
+            raw_keywords.append(intent.product_name)
+
+        keywords = normalize_search_keywords(raw_keywords)
 
         required_features = intent.required_features if intent else []
 

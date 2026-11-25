@@ -277,7 +277,7 @@ def test_supervisor_route_exception_logging_does_not_leak_sensitive_exception_de
     """Verify that exceptions in SupervisorAgent.route() log only error_type and do not leak exception messages or fake secrets."""
     import logging
 
-    fake_secret = "AIzaSyFakeSecretGeminiKey12345_DO_NOT_LOG"
+    fake_secret = "test-only-fake-gemini-key-material-DO_NOT_LOG"
     sensitive_exception = RuntimeError(f"Connection to api.google.com failed with key {fake_secret}")
 
     mock_gemini = MagicMock()
@@ -306,7 +306,7 @@ def test_shopping_agent_intent_extraction_exception_logging_sanitized(caplog):
     import logging
     from backend.app.services.shopping_agent import ShoppingAgent
 
-    fake_secret = "AIzaSyFakeSecretGeminiKey99999_DO_NOT_LOG"
+    fake_secret = "test-only-fake-gemini-key-material-99999_DO_NOT_LOG"
     sensitive_exception = RuntimeError(f"Failed to query Gemini endpoint with secret token {fake_secret}")
 
     mock_gemini = MagicMock()

@@ -1,9 +1,12 @@
 from pathlib import Path
+import hashlib
+from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
 import pytest
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -37,6 +40,14 @@ def test_database_migration_upgrades_and_downgrades_sqlite(
             "order_items",
             "guest_order_verifications",
             "guest_access_sessions",
+            "guest_email_outbox",
+            "auth_rate_limits",
+            "user_gemini_settings",
+            "gemini_usage_events",
+            "admin_audit_logs",
+            "ai_providers",
+            "ai_models",
+            "platform_ai_keys",
             "alembic_version",
         }.issubset(set(inspector.get_table_names()))
         assert "password_hash" in {
@@ -49,10 +60,30 @@ def test_database_migration_upgrades_and_downgrades_sqlite(
                     "WHERE type='index' AND name='uq_users_email_lower'"
                 )
             )
+            users_table_sql = connection.scalar(
+                text(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type='table' AND name='users'"
+                )
+            )
         assert index_sql is not None
         assert index_sql.startswith(
             "CREATE UNIQUE INDEX uq_users_email_lower"
         )
+        assert users_table_sql is not None
+        assert "ck_users_role_valid" in users_table_sql
+        assert "role IN ('customer', 'admin', 'super_admin')" in users_table_sql
+
+        # Verify check constraint enforces role validity
+        with pytest.raises(IntegrityError):
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO users (id, email, password_hash, role) "
+                        "VALUES (:id, 'invalid_role@example.com', 'hash', 'invalid_role')"
+                    ),
+                    {"id": uuid4().hex},
+                )
         assert inspector.get_foreign_keys("addresses")[0]["options"].get(
             "ondelete"
         ) == "CASCADE"
@@ -88,6 +119,10 @@ def test_database_migration_upgrades_and_downgrades_sqlite(
         assert "customer_email_snapshot" in orders_columns
         outbox_columns = {col["name"]: col for col in inspector.get_columns("guest_email_outbox")}
         assert "lease_token" in outbox_columns
+
+        # Verify multi-provider tables from revision 0011
+        ai_provider_cols = {col["name"] for col in inspector.get_columns("ai_providers")}
+        assert {"id", "code", "display_name", "adapter_type", "is_enabled", "priority"}.issubset(ai_provider_cols)
     finally:
         engine.dispose()
 
@@ -98,6 +133,8 @@ def test_database_migration_upgrades_and_downgrades_sqlite(
         assert "users" not in table_names
         assert "carts" not in table_names
         assert "orders" not in table_names
+        assert "ai_providers" not in table_names
+        assert "ai_models" not in table_names
     finally:
         verify_engine.dispose()
 
@@ -131,10 +168,6 @@ def test_migration_0004_revision_metadata() -> None:
 def test_migration_0004_fingerprint_backfill_and_constraints(
     tmp_path: Path, monkeypatch
 ) -> None:
-    import hashlib
-    from uuid import uuid4
-    from sqlalchemy.exc import IntegrityError
-
     database_path = (tmp_path / "migration-0004-test.sqlite").as_posix()
     database_url = f"sqlite+pysqlite:///{database_path}"
     monkeypatch.setenv("DATABASE_URL", database_url)
@@ -146,7 +179,7 @@ def test_migration_0004_fingerprint_backfill_and_constraints(
     engine = create_engine(database_url)
     user_id = uuid4()
     order_id = uuid4()
-    legacy_key = "legacy-idempotency-key-001"
+    legacy_key = "test-legacy-idempotency-token-001"
 
     with engine.begin() as conn:
         conn.execute(
@@ -167,8 +200,8 @@ def test_migration_0004_fingerprint_backfill_and_constraints(
             {"id": order_id.hex, "user_id": user_id.hex, "key": legacy_key},
         )
 
-    # 2. Upgrade to head (0004_order_fingerprint)
-    command.upgrade(config, "head")
+    # 2. Upgrade to revision 0004
+    command.upgrade(config, "0004_order_fingerprint")
 
     # 3. Verify backfilled request_fingerprint
     expected_hash = hashlib.sha256(
@@ -222,8 +255,6 @@ def test_migration_0005_revision_metadata() -> None:
 def test_migration_0005_email_snapshot_backfill_and_tables(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from uuid import uuid4
-
     database_path = (tmp_path / "migration-0005-test.sqlite").as_posix()
     database_url = f"sqlite+pysqlite:///{database_path}"
     monkeypatch.setenv("DATABASE_URL", database_url)
@@ -256,8 +287,8 @@ def test_migration_0005_email_snapshot_backfill_and_tables(
             {"id": order_id.hex, "user_id": user_id.hex},
         )
 
-    # 2. Upgrade to head (0005_guest_order_verification)
-    command.upgrade(config, "head")
+    # 2. Upgrade to revision 0005
+    command.upgrade(config, "0005_guest_order_verification")
 
     # 3. Verify backfilled customer_email_snapshot
     with engine.connect() as conn:
@@ -318,8 +349,8 @@ def test_migration_0006_lease_token_column_and_downgrade(
     cols_0005 = {c["name"] for c in inspector_0005.get_columns("guest_email_outbox")}
     assert "lease_token" not in cols_0005
 
-    # Upgrade to 0006 (head)
-    command.upgrade(config, "head")
+    # Upgrade to 0006
+    command.upgrade(config, "0006_outbox_lease_token")
     inspector_0006 = inspect(engine)
     cols_0006 = {c["name"] for c in inspector_0006.get_columns("guest_email_outbox")}
     assert "lease_token" in cols_0006
@@ -359,8 +390,8 @@ def test_migration_0007_auth_rate_limits_table_and_downgrade(
     inspector_0006 = inspect(engine)
     assert "auth_rate_limits" not in inspector_0006.get_table_names()
 
-    # Upgrade to 0007 (head)
-    command.upgrade(config, "head")
+    # Upgrade to 0007
+    command.upgrade(config, "0007_auth_rate_limits")
     inspector_0007 = inspect(engine)
     assert "auth_rate_limits" in inspector_0007.get_table_names()
     cols_0007 = {c["name"] for c in inspector_0007.get_columns("auth_rate_limits")}
@@ -370,4 +401,167 @@ def test_migration_0007_auth_rate_limits_table_and_downgrade(
     command.downgrade(config, "0006_outbox_lease_token")
     inspector_down = inspect(engine)
     assert "auth_rate_limits" not in inspector_down.get_table_names()
+    engine.dispose()
+
+
+def test_migration_0008_revision_metadata() -> None:
+    import importlib.util
+
+    path = ROOT / "backend" / "alembic" / "versions" / "0008_user_gemini_settings.py"
+    spec = importlib.util.spec_from_file_location("phase_6_revision_0008", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.revision == "0008_user_gemini_settings"
+    assert module.down_revision == "0007_auth_rate_limits"
+
+
+def test_migration_0009_revision_metadata() -> None:
+    import importlib.util
+
+    path = ROOT / "backend" / "alembic" / "versions" / "0009_gemini_usage_events.py"
+    spec = importlib.util.spec_from_file_location("phase_6_revision_0009", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.revision == "0009_gemini_usage_events"
+    assert module.down_revision == "0008_user_gemini_settings"
+
+
+def test_migration_0010_revision_metadata() -> None:
+    import importlib.util
+
+    path = ROOT / "backend" / "alembic" / "versions" / "0010_admin_roles_and_audit.py"
+    spec = importlib.util.spec_from_file_location("phase_6_revision_0010", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.revision == "0010_admin_roles_and_audit"
+    assert module.down_revision == "0009_gemini_usage_events"
+
+
+def test_migration_0011_revision_metadata() -> None:
+    import importlib.util
+
+    path = ROOT / "backend" / "alembic" / "versions" / "0011_multi_provider_registry.py"
+    spec = importlib.util.spec_from_file_location("phase_6_revision_0011", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.revision == "0011_multi_provider_registry"
+    assert module.down_revision == "0010_admin_roles_and_audit"
+
+
+def test_migration_0011_tables_and_downgrade(tmp_path: Path, monkeypatch) -> None:
+    database_path = (tmp_path / "migration-0011-test.sqlite").as_posix()
+    database_url = f"sqlite+pysqlite:///{database_path}"
+    monkeypatch.setenv("DATABASE_URL", database_url)
+
+    config = Config(str(ROOT / "alembic.ini"))
+    # Upgrade to 0010
+    command.upgrade(config, "0010_admin_roles_and_audit")
+    engine = create_engine(database_url)
+    inspector_0010 = inspect(engine)
+    assert "ai_providers" not in inspector_0010.get_table_names()
+
+    # Upgrade to 0011
+    command.upgrade(config, "0011_multi_provider_registry")
+    inspector_0011 = inspect(engine)
+    tables = inspector_0011.get_table_names()
+    assert "ai_providers" in tables
+    assert "ai_models" in tables
+    assert "platform_ai_keys" in tables
+
+    # Downgrade back to 0010
+    command.downgrade(config, "0010_admin_roles_and_audit")
+    inspector_down = inspect(engine)
+    down_tables = inspector_down.get_table_names()
+    assert "ai_providers" not in down_tables
+    assert "ai_models" not in down_tables
+    assert "platform_ai_keys" not in down_tables
+    engine.dispose()
+
+
+def test_migration_0012_revision_metadata() -> None:
+    import importlib.util
+
+    path = ROOT / "backend" / "alembic" / "versions" / "0012_users_role_check_constraint.py"
+    spec = importlib.util.spec_from_file_location("phase_6_revision_0012", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.revision == "0012_users_role_check"
+    assert module.down_revision == "0011_multi_provider_registry"
+
+
+def test_migration_0012_constraint_enforcement_and_downgrade(
+    tmp_path: Path, monkeypatch
+) -> None:
+    database_path = (tmp_path / "migration-0012-test.sqlite").as_posix()
+    database_url = f"sqlite+pysqlite:///{database_path}"
+    monkeypatch.setenv("DATABASE_URL", database_url)
+
+    config = Config(str(ROOT / "alembic.ini"))
+    # Upgrade to 0011
+    command.upgrade(config, "0011_multi_provider_registry")
+    engine = create_engine(database_url)
+    with engine.connect() as conn:
+        sql_0011 = conn.scalar(
+            text("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'")
+        )
+        assert "ck_users_role_valid" not in (sql_0011 or "")
+
+    # Upgrade to 0012
+    command.upgrade(config, "0012_users_role_check")
+    with engine.connect() as conn:
+        sql_0012 = conn.scalar(
+            text("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'")
+        )
+        assert sql_0012 is not None
+        assert "ck_users_role_valid" in sql_0012
+        assert "role IN ('customer', 'admin', 'super_admin')" in sql_0012
+
+        idx_sql = conn.scalar(
+            text(
+                "SELECT sql FROM sqlite_master "
+                "WHERE type='index' AND name='uq_users_email_lower'"
+            )
+        )
+        assert idx_sql is not None
+
+        # Verify valid roles succeed
+        with engine.begin() as insert_conn:
+            insert_conn.execute(
+                text(
+                    "INSERT INTO users (id, email, password_hash, role) "
+                    "VALUES (:id, 'admin@storeflow.test', 'h', 'admin')"
+                ),
+                {"id": uuid4().hex},
+            )
+            insert_conn.execute(
+                text(
+                    "INSERT INTO users (id, email, password_hash, role) "
+                    "VALUES (:id, 'cust@storeflow.test', 'h', 'customer')"
+                ),
+                {"id": uuid4().hex},
+            )
+
+        # Verify invalid role raises IntegrityError
+        with pytest.raises(IntegrityError):
+            with engine.begin() as insert_conn:
+                insert_conn.execute(
+                    text(
+                        "INSERT INTO users (id, email, password_hash, role) "
+                        "VALUES (:id, 'bad@storeflow.test', 'h', 'invalid_role')"
+                    ),
+                    {"id": uuid4().hex},
+                )
+
+    # Downgrade back to 0011
+    command.downgrade(config, "0011_multi_provider_registry")
+    with engine.connect() as conn:
+        sql_down = conn.scalar(
+            text("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'")
+        )
+        assert "ck_users_role_valid" not in (sql_down or "")
     engine.dispose()

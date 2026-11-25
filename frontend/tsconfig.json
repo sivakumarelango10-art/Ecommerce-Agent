@@ -18,5 +18,6 @@
     "types": ["@testing-library/jest-dom/vitest"]
   },
   "include": ["src"],
+  "exclude": ["src/__tests__", "src/test"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

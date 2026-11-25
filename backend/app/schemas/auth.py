@@ -28,6 +28,7 @@ class UserResponse(BaseModel):
     id: UUID
     email: EmailStr
     is_active: bool
+    role: str = "customer"
 
 
 class TokenResponse(BaseModel):

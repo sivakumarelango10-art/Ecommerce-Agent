@@ -46,6 +46,13 @@ def shared_isolated_catalogue_engine():
     engine.dispose()
 
 
+@pytest.fixture(autouse=True)
+def clean_seed_environment(monkeypatch: pytest.MonkeyPatch):
+    """Ensure tests in this module run without ambient host database URLs in os.environ."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL_UNPOOLED", raising=False)
+
+
 # --- Core Seeding & Idempotency Tests ---
 
 def test_seed_catalogue_initial_run_creates_all_records(isolated_catalogue_db: Session):

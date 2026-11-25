@@ -8,13 +8,14 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, role?: string) => Promise<void>;
   register: (email: string, password: string, displayName: string) => Promise<void>;
   logout: () => void;
   clearError: () => void;
+  setUserRole: (role: string) => void;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -24,7 +25,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const clearError = useCallback(() => setError(null), []);
 
-  const login = useCallback(async (email: string, password: string) => {
+  const setUserRole = useCallback((role: string) => {
+    setCurrentUser((prev) => (prev ? { ...prev, role } : null));
+  }, []);
+
+  const login = useCallback(async (email: string, password: string, role?: string) => {
     setIsLoading(true);
     setError(null);
     try {
@@ -34,6 +39,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         id: '',
         email: email,
         is_active: true,
+        role: role || 'customer',
       });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -94,6 +100,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         register,
         logout,
         clearError,
+        setUserRole,
       }}
     >
       {children}

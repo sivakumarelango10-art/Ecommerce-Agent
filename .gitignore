@@ -1,8 +1,41 @@
+# Environment & Secrets
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.pkcs12
+*service_account*.json
+*credentials*.json
+*.tfstate*
+*.log
+secrets/
+.secrets/
+
+# Python & Virtual Environments
 .venv/
+venv/
+env/
 __pycache__/
 .pytest_cache/
 *.py[cod]
-.neon
+.coverage
+htmlcov/
+
+# Node & Frontend
 node_modules/
 dist/
+build/
+.eslintcache
+
+# Databases & Local state
+.neon
+*.db
+*.sqlite
+*.sqlite3
+
+# Security Scanners
+gitleaks.json
+detect-secrets.json

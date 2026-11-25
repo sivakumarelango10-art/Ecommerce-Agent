@@ -49,7 +49,7 @@ export const OrderInspector: React.FC<OrderInspectorProps> = ({
   }
 
   const formatCurrency = (amt: number, curr = 'USD') => {
-    return new Intl.NumberFormat('en-US', {
+    return new Intl.NumberFormat(curr === 'INR' ? 'en-IN' : 'en-US', {
       style: 'currency',
       currency: curr,
     }).format(amt);

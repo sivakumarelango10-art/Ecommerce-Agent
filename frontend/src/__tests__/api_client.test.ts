@@ -250,6 +250,139 @@ describe('API Client & Token Isolation', () => {
     }
   });
 
+  describe('Gemini Key Management Endpoints', () => {
+    const token = 'test-customer-jwt-token';
+
+    it('api.gemini.getStatus fetches personal key metadata with Authorization header', async () => {
+      const mockStatus = {
+        has_key: true,
+        is_enabled: true,
+        key_hint: '9999',
+        status: 'ACTIVE',
+        last_validated_at: '2026-11-24T12:00:00Z',
+        last_used_at: null,
+        cooldown_until: null,
+      };
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => mockStatus,
+      } as Response);
+
+      const res = await api.gemini.getStatus(token);
+      expect(fetchSpy).toHaveBeenCalledWith('/api/v1/customers/me/gemini-key', {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      expect(res.has_key).toBe(true);
+      expect(res.key_hint).toBe('9999');
+      expect(res.status).toBe('ACTIVE');
+    });
+
+    it('api.gemini.saveKey posts API key and returns updated settings', async () => {
+      const mockSaved = {
+        has_key: true,
+        is_enabled: true,
+        key_hint: '1234',
+        status: 'ACTIVE',
+        last_validated_at: '2026-11-24T12:05:00Z',
+        last_used_at: null,
+        cooldown_until: null,
+      };
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => mockSaved,
+      } as Response);
+
+      const res = await api.gemini.saveKey('test-only-fake-gemini-key-material-1234', token);
+      expect(fetchSpy).toHaveBeenCalledWith('/api/v1/customers/me/gemini-key', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ api_key: 'test-only-fake-gemini-key-material-1234' }),
+      });
+      expect(res.key_hint).toBe('1234');
+    });
+
+    it('api.gemini.toggleKey patches is_enabled status', async () => {
+      const mockToggled = {
+        has_key: true,
+        is_enabled: false,
+        key_hint: '1234',
+        status: 'ACTIVE',
+        last_validated_at: '2026-11-24T12:05:00Z',
+        last_used_at: null,
+        cooldown_until: null,
+      };
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => mockToggled,
+      } as Response);
+
+      const res = await api.gemini.toggleKey(false, token);
+      expect(fetchSpy).toHaveBeenCalledWith('/api/v1/customers/me/gemini-key', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ is_enabled: false }),
+      });
+      expect(res.is_enabled).toBe(false);
+    });
+
+    it('api.gemini.deleteKey issues DELETE and handles 204 No Content safely', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        status: 204,
+        headers: new Headers(),
+      } as Response);
+
+      await expect(api.gemini.deleteKey(token)).resolves.toBeUndefined();
+      expect(fetchSpy).toHaveBeenCalledWith('/api/v1/customers/me/gemini-key', {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+    });
+
+    it('api.gemini.validateKey sends key for test validation', async () => {
+      const mockValidation = {
+        is_valid: true,
+        status: 'VALID',
+        message: 'Key is valid.',
+        masked_key: '...1234',
+      };
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => mockValidation,
+      } as Response);
+
+      const res = await api.gemini.validateKey('test-only-fake-gemini-key-material-1234', token);
+      expect(fetchSpy).toHaveBeenCalledWith('/api/v1/customers/me/gemini-key/validate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ api_key: 'test-only-fake-gemini-key-material-1234' }),
+      });
+      expect(res.is_valid).toBe(true);
+      expect(res.status).toBe('VALID');
+    });
+  });
+
   it('correctly handles neon management API methods with admin bearer token', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,

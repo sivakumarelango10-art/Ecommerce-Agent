@@ -600,6 +600,7 @@ def test_missing_production_smtp_configuration_fails_safely():
         GEMINI_API_KEY="test-key",
         DATABASE_URL="sqlite+pysqlite:///:memory:",
         AUTH_SECRET_KEY=TEST_AUTH_SECRET.get_secret_value(),
+        USER_KEY_ENCRYPTION_SECRET="test_encryption_secret_dummy_fixture_val",
         ENVIRONMENT="production",
         SMTP_HOST=None,
         SMTP_FROM_EMAIL=None,
@@ -617,6 +618,7 @@ def test_no_production_mock_fallback():
         GEMINI_API_KEY="test-key",
         DATABASE_URL="sqlite+pysqlite:///:memory:",
         AUTH_SECRET_KEY=TEST_AUTH_SECRET.get_secret_value(),
+        USER_KEY_ENCRYPTION_SECRET="test_encryption_secret_dummy_fixture_val",
         ENVIRONMENT="production",
     )
     with pytest.raises(
@@ -1284,6 +1286,7 @@ def test_postgres_guest_verification_lifecycle():
         pytest.skip("POSTGRES_TEST_DATABASE_URL not configured; skipping live PostgreSQL test")
 
     engine = create_engine(pg_url)
+    old_db_url = os.environ.get("DATABASE_URL")
     try:
         with engine.connect() as conn:
             db_name = conn.execute(text("SELECT current_database()")).scalar()
@@ -1345,6 +1348,10 @@ def test_postgres_guest_verification_lifecycle():
             assert sess_rec is not None
             assert sess_rec.revoked_at is None
     finally:
+        if old_db_url is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = old_db_url
         engine.dispose()
 
 
@@ -1544,6 +1551,7 @@ def test_postgres_migration_0005_downgrade_and_reupgrade():
     root = Path(__file__).resolve().parents[2]
     config = Config(str(root / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", pg_url.replace("%", "%%"))
+    old_db_url = os.environ.get("DATABASE_URL")
     os.environ["DATABASE_URL"] = pg_url
 
     engine = create_engine(pg_url)
@@ -1576,6 +1584,10 @@ def test_postgres_migration_0005_downgrade_and_reupgrade():
         assert "delivery_failed" in gov_cols
 
     finally:
+        if old_db_url is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = old_db_url
         try:
             command.upgrade(config, "head")
         except Exception:
