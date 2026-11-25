@@ -158,13 +158,13 @@ describe('SettingsModal Component', () => {
     const input = screen.getByLabelText(/API Key/i);
     expect(input).toHaveAttribute('type', 'password');
 
-    fireEvent.change(input, { target: { value: 'AIzaSyTestKeyValid12345678' } });
+    fireEvent.change(input, { target: { value: 'test-only-fake-gemini-key-material-5678' } });
 
     const validateButton = screen.getByRole('button', { name: /Validate Key/i });
     fireEvent.click(validateButton);
 
     await waitFor(() => {
-      expect(validateSpy).toHaveBeenCalledWith('AIzaSyTestKeyValid12345678', 'test-valid-access-token');
+      expect(validateSpy).toHaveBeenCalledWith('test-only-fake-gemini-key-material-5678', 'test-valid-access-token');
     });
 
     expect(screen.getByText('Validation Passed')).toBeInTheDocument();
@@ -198,7 +198,7 @@ describe('SettingsModal Component', () => {
     fireEvent.click(screen.getByRole('button', { name: /Add Personal Key/i }));
 
     const input = screen.getByLabelText(/API Key/i);
-    fireEvent.change(input, { target: { value: 'AIzaSyInvalidKey' } });
+    fireEvent.change(input, { target: { value: 'test-only-fake-gemini-key-material-invalid' } });
 
     fireEvent.click(screen.getByRole('button', { name: /Validate Key/i }));
 
@@ -239,12 +239,12 @@ describe('SettingsModal Component', () => {
     fireEvent.click(screen.getByRole('button', { name: /Add Personal Key/i }));
 
     const input = screen.getByLabelText(/API Key/i);
-    fireEvent.change(input, { target: { value: 'AIzaSySecretSaveKey7777' } });
+    fireEvent.change(input, { target: { value: 'test-only-fake-gemini-key-material-7777' } });
 
     fireEvent.click(screen.getByRole('button', { name: /Save Key/i }));
 
     await waitFor(() => {
-      expect(saveSpy).toHaveBeenCalledWith('AIzaSySecretSaveKey7777', 'test-valid-access-token');
+      expect(saveSpy).toHaveBeenCalledWith('test-only-fake-gemini-key-material-7777', 'test-valid-access-token');
     });
 
     // Success banner is displayed
@@ -283,7 +283,7 @@ describe('SettingsModal Component', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Replace Key' }));
 
     const input = screen.getByLabelText(/API Key/i);
-    fireEvent.change(input, { target: { value: 'AIzaSyNewKeyWithNoQuota' } });
+    fireEvent.change(input, { target: { value: 'test-only-fake-gemini-key-material-noquota' } });
 
     fireEvent.click(screen.getByRole('button', { name: /Save Key/i }));
 

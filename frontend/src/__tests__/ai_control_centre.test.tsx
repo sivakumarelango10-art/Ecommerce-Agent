@@ -472,7 +472,7 @@ describe('StoreFlow Phase 6E.2: Admin AI Control Centre Frontend Test Suite', ()
     fireEvent.change(screen.getByPlaceholderText(/e.g. production-default/i), {
       target: { value: 'tier-1-quota' },
     });
-    fireEvent.change(screen.getByPlaceholderText(/sk-\.\.\. or AIzaSy\.\.\./i), {
+    fireEvent.change(screen.getByPlaceholderText(/Enter provider API key/i), {
       target: { value: 'sk-live-super-secret-12345' },
     });
 
@@ -558,7 +558,7 @@ describe('StoreFlow Phase 6E.2: Admin AI Control Centre Frontend Test Suite', ()
       target: { value: 'Temporary Secret Label' },
     });
 
-    const keyInput = screen.getByPlaceholderText(/sk-\.\.\. or AIzaSy\.\.\./i) as HTMLInputElement;
+    const keyInput = screen.getByPlaceholderText(/Enter provider API key/i) as HTMLInputElement;
     fireEvent.change(keyInput, { target: { value: 'sk-temporary-key-to-clear' } });
     expect(keyInput.value).toBe('sk-temporary-key-to-clear');
 
@@ -581,7 +581,7 @@ describe('StoreFlow Phase 6E.2: Admin AI Control Centre Frontend Test Suite', ()
       expect(screen.getByText('...8888')).toBeInTheDocument();
       // Plaintext or secret prefix is never in document
       expect(screen.queryByText(/sk-live/i)).not.toBeInTheDocument();
-      expect(screen.queryByText(/AIzaSy/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/super-secret/i)).not.toBeInTheDocument();
     });
   });
 

@@ -650,7 +650,7 @@ export const PlatformKeyVault: React.FC = () => {
                   type={showRawKeyInput ? 'text' : 'password'}
                   value={newRawApiKey}
                   onChange={(e) => setNewRawApiKey(e.target.value)}
-                  placeholder="sk-... or AIzaSy..."
+                  placeholder="Enter provider API key"
                   required
                   autoComplete="off"
                   className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"

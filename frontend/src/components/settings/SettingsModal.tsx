@@ -589,7 +589,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                         setFormError(null);
                         setValidationResult(null);
                       }}
-                      placeholder="Paste your Gemini API key (starts with AIza...)"
+                      placeholder="Paste your Gemini API key"
                       className="w-full px-3.5 py-2 pr-10 text-xs font-mono bg-white border border-slate-300 rounded-lg text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                     />
                     <button

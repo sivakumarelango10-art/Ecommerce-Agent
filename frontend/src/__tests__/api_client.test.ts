@@ -298,14 +298,14 @@ describe('API Client & Token Isolation', () => {
         json: async () => mockSaved,
       } as Response);
 
-      const res = await api.gemini.saveKey('AIzaSyTestKey1234', token);
+      const res = await api.gemini.saveKey('test-only-fake-gemini-key-material-1234', token);
       expect(fetchSpy).toHaveBeenCalledWith('/api/v1/customers/me/gemini-key', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ api_key: 'AIzaSyTestKey1234' }),
+        body: JSON.stringify({ api_key: 'test-only-fake-gemini-key-material-1234' }),
       });
       expect(res.key_hint).toBe('1234');
     });
@@ -369,14 +369,14 @@ describe('API Client & Token Isolation', () => {
         json: async () => mockValidation,
       } as Response);
 
-      const res = await api.gemini.validateKey('AIzaSyValidKey1234', token);
+      const res = await api.gemini.validateKey('test-only-fake-gemini-key-material-1234', token);
       expect(fetchSpy).toHaveBeenCalledWith('/api/v1/customers/me/gemini-key/validate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ api_key: 'AIzaSyValidKey1234' }),
+        body: JSON.stringify({ api_key: 'test-only-fake-gemini-key-material-1234' }),
       });
       expect(res.is_valid).toBe(true);
       expect(res.status).toBe('VALID');

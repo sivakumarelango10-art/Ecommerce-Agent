@@ -267,7 +267,7 @@ const mockProvidersData: AdminProvidersResponse = {
       slot_index: 0,
       slot_id: 'slot-primary-1',
       key_id: 'gemini-key-1',
-      masked_key: 'AIza...8aQ1',
+      masked_key: '...8aQ1',
       quota_group: 'company-default',
       is_active: true,
       in_cooldown: false,
@@ -280,7 +280,7 @@ const mockProvidersData: AdminProvidersResponse = {
       slot_index: 1,
       slot_id: 'slot-primary-2',
       key_id: 'gemini-key-2',
-      masked_key: 'AIza...3mP9',
+      masked_key: '...3mP9',
       quota_group: 'company-default',
       is_active: true,
       in_cooldown: true,
@@ -524,7 +524,7 @@ describe('StoreFlow Phase 6D: Admin Dashboard Frontend Test Suite', () => {
 
     // Verify no secret or ciphertext appears anywhere in DOM
     const htmlContent = container.innerHTML;
-    expect(htmlContent).not.toContain('AIzaSy');
+    expect(htmlContent).not.toContain('secret-plaintext');
     expect(htmlContent).not.toContain('ciphertext');
     expect(htmlContent).not.toContain('secret_key');
   });
@@ -640,8 +640,8 @@ describe('StoreFlow Phase 6D: Admin Dashboard Frontend Test Suite', () => {
       expect(screen.getByText(/Worker-Specific Runtime Snapshot/i)).toBeInTheDocument();
       expect(screen.getByText(/separate backend worker processes can have different cooldown/i)).toBeInTheDocument();
       expect(screen.getByText(/not a globally synchronized cluster state/i)).toBeInTheDocument();
-      expect(screen.getByText('AIza...8aQ1')).toBeInTheDocument();
-      expect(screen.getByText('AIza...3mP9')).toBeInTheDocument();
+      expect(screen.getByText('...8aQ1')).toBeInTheDocument();
+      expect(screen.getByText('...3mP9')).toBeInTheDocument();
       expect(screen.getAllByText(/Healthy/i).length).toBeGreaterThanOrEqual(1);
       expect(screen.getByText(/Cooldown \(45s\)/i)).toBeInTheDocument();
       expect(screen.getAllByText(/gemini-2.5-flash/i).length).toBeGreaterThanOrEqual(1);

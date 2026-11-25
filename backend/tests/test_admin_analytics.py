@@ -580,7 +580,7 @@ def test_audit_metadata_is_sanitized(api_client):
             action="TEST_SENSITIVE_AUDIT",
             target_type="config",
             metadata={
-                "notes": "User key was AIzaSySecretKeyThatMustBeSanitized35CharsLong",
+                "notes": "User key was FAKE_API_KEY_google_gemini_test_value_1234",
                 "ordinary_field": "Safe configuration detail",
             },
         )
@@ -591,7 +591,7 @@ def test_audit_metadata_is_sanitized(api_client):
     data = res.json()
     assert len(data["items"]) >= 1
     item = next(i for i in data["items"] if i["action"] == "TEST_SENSITIVE_AUDIT")
-    assert "AIzaSy" not in str(item["metadata_json"])
+    assert "FAKE_API_KEY" not in str(item["metadata_json"])
     assert "[REDACTED_SECRET]" in str(item["metadata_json"])
     assert item["metadata_json"]["ordinary_field"] == "Safe configuration detail"
 

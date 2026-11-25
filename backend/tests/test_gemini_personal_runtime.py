@@ -110,7 +110,7 @@ def runtime_setup(monkeypatch: pytest.MonkeyPatch):
 def _create_user_with_key(
     client: TestClient,
     email: str = "customer@example.com",
-    raw_key: str = "AIzaSyPersonalTestKey1234567890",
+    raw_key: str = "test-only-fake-gemini-key-material-runtime",
     is_enabled: bool = True,
     status: str = "ACTIVE",
     cooldown_until: Any = None,
@@ -358,8 +358,8 @@ def test_personal_recovery_after_cooldown(runtime_setup):
 # ---------------------------------------------------------------------------
 def test_user_a_can_never_access_user_b_personal_key(runtime_setup):
     client, set_outcome, clients = runtime_setup
-    user_a, token_a, key_a = _create_user_with_key(client, email="usera@test.com", raw_key="AIzaSyKeyA111111111")
-    user_b, token_b, key_b = _create_user_with_key(client, email="userb@test.com", raw_key="AIzaSyKeyB222222222")
+    user_a, token_a, key_a = _create_user_with_key(client, email="usera@test.com", raw_key="test-only-fake-gemini-key-material-keyA")
+    user_b, token_b, key_b = _create_user_with_key(client, email="userb@test.com", raw_key="test-only-fake-gemini-key-material-keyB")
 
     set_outcome(key_a, "Answer for A")
     set_outcome(key_b, "Answer for B")
@@ -507,7 +507,7 @@ def test_telemetry_failure_does_not_break_ai_responses(runtime_setup, monkeypatc
 # ---------------------------------------------------------------------------
 def test_no_secret_or_prompt_stored_in_telemetry(runtime_setup):
     client, set_outcome, clients = runtime_setup
-    secret_key = "AIzaSySuperSecretPersonalKey9999"
+    secret_key = "test-only-fake-gemini-key-material-supersecret"
     user, token, raw_key = _create_user_with_key(client, raw_key=secret_key)
     headers = {"Authorization": f"Bearer {token}"}
 

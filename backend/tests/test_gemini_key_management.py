@@ -111,7 +111,7 @@ def test_authenticated_user_can_save_valid_key(test_setup):
     user, token = _create_user(client)
     headers = {"Authorization": f"Bearer {token}"}
 
-    payload = {"api_key": "AIzaSyValidCustomerKey1234567890abcdef"}
+    payload = {"api_key": "test-only-fake-gemini-key-material-cdef"}
     response = client.post("/api/v1/customers/me/gemini-key", json=payload, headers=headers)
 
     assert response.status_code == 200
@@ -146,7 +146,7 @@ def test_invalid_key_is_not_saved(test_setup):
         "API_KEY_INVALID: The provided API key is expired or invalid",
     )
 
-    payload = {"api_key": "AIzaSyInvalidKey0000000000000000000000"}
+    payload = {"api_key": "test-only-fake-gemini-key-material-invalid"}
     response = client.post("/api/v1/customers/me/gemini-key", json=payload, headers=headers)
 
     assert response.status_code == 400
@@ -175,7 +175,7 @@ def test_quota_error_does_not_mark_the_key_invalid(test_setup):
     # 1. Validation-only endpoint
     val_res = client.post(
         "/api/v1/customers/me/gemini-key/validate",
-        json={"api_key": "AIzaSyQuotaExhaustedKey1234567890"},
+        json={"api_key": "test-only-fake-gemini-key-material-quota"},
         headers=headers,
     )
     assert val_res.status_code == 200
@@ -188,7 +188,7 @@ def test_quota_error_does_not_mark_the_key_invalid(test_setup):
     # 2. Save endpoint returns 429 and does NOT save
     save_res = client.post(
         "/api/v1/customers/me/gemini-key",
-        json={"api_key": "AIzaSyQuotaExhaustedKey1234567890"},
+        json={"api_key": "test-only-fake-gemini-key-material-quota"},
         headers=headers,
     )
     assert save_res.status_code == 429
@@ -213,7 +213,7 @@ def test_temporary_provider_outage_is_handled_safely(test_setup):
         "The model is currently overloaded. Please retry later.",
     )
 
-    payload = {"api_key": "AIzaSyOverloadedKey1234567890"}
+    payload = {"api_key": "test-only-fake-gemini-key-material-overload"}
     response = client.post("/api/v1/customers/me/gemini-key", json=payload, headers=headers)
 
     assert response.status_code == 503
@@ -236,7 +236,7 @@ def test_existing_key_remains_unchanged_if_replacement_validation_fails(test_set
     fake_client.models.outcome = "pong"
     client.post(
         "/api/v1/customers/me/gemini-key",
-        json={"api_key": "AIzaSyOriginalKey111111111111"},
+        json={"api_key": "test-only-fake-gemini-key-material-1111"},
         headers=headers,
     )
 
@@ -253,7 +253,7 @@ def test_existing_key_remains_unchanged_if_replacement_validation_fails(test_set
     )
     replace_res = client.post(
         "/api/v1/customers/me/gemini-key",
-        json={"api_key": "AIzaSyBrokenReplacement2222222"},
+        json={"api_key": "test-only-fake-gemini-key-material-broken"},
         headers=headers,
     )
     assert replace_res.status_code == 400
@@ -275,7 +275,7 @@ def test_get_returns_masked_key_only(test_setup):
     user, token = _create_user(client)
     headers = {"Authorization": f"Bearer {token}"}
 
-    full_secret_key = "AIzaSySuperSecretKeyXYZ9876543210"
+    full_secret_key = "test-only-fake-gemini-key-material-3210"
     client.post(
         "/api/v1/customers/me/gemini-key",
         json={"api_key": full_secret_key},
@@ -300,7 +300,7 @@ def test_api_never_returns_ciphertext(test_setup):
 
     post_res = client.post(
         "/api/v1/customers/me/gemini-key",
-        json={"api_key": "AIzaSyCiphertextCheck1234567890"},
+        json={"api_key": "test-only-fake-gemini-key-material-ciphercheck"},
         headers=headers,
     )
     assert post_res.status_code == 200
@@ -331,7 +331,7 @@ def test_enable_and_disable_endpoints_work(test_setup):
     # Save initial key (defaults to enabled)
     client.post(
         "/api/v1/customers/me/gemini-key",
-        json={"api_key": "AIzaSyToggleKey1234567890"},
+        json={"api_key": "test-only-fake-gemini-key-material-toggle"},
         headers=headers,
     )
 
@@ -372,7 +372,7 @@ def test_delete_removes_the_key(test_setup):
 
     client.post(
         "/api/v1/customers/me/gemini-key",
-        json={"api_key": "AIzaSyDeleteMeKey1234567890"},
+        json={"api_key": "test-only-fake-gemini-key-material-delete"},
         headers=headers,
     )
 
@@ -402,7 +402,7 @@ def test_user_a_cannot_access_user_b_key(test_setup):
     # User B saves a key
     client.post(
         "/api/v1/customers/me/gemini-key",
-        json={"api_key": "AIzaSyKeyForUserBBBBBBBBBBBB"},
+        json={"api_key": "test-only-fake-gemini-key-material-BBBB"},
         headers={"Authorization": f"Bearer {token_b}"},
     )
 
@@ -436,7 +436,7 @@ def test_user_a_cannot_modify_user_b_key(test_setup):
     # User B saves a key
     client.post(
         "/api/v1/customers/me/gemini-key",
-        json={"api_key": "AIzaSyVictimKey1234567890"},
+        json={"api_key": "test-only-fake-gemini-key-material-7890"},
         headers={"Authorization": f"Bearer {token_b}"},
     )
 
@@ -470,10 +470,10 @@ def test_unauthenticated_access_is_rejected(test_setup):
     client, fake_client = test_setup
 
     assert client.get("/api/v1/customers/me/gemini-key").status_code == 401
-    assert client.post("/api/v1/customers/me/gemini-key", json={"api_key": "AIzaSyKey12345"}).status_code == 401
+    assert client.post("/api/v1/customers/me/gemini-key", json={"api_key": "test-only-fake-gemini-key-material-unauth1"}).status_code == 401
     assert client.patch("/api/v1/customers/me/gemini-key", json={"is_enabled": False}).status_code == 401
     assert client.delete("/api/v1/customers/me/gemini-key").status_code == 401
-    assert client.post("/api/v1/customers/me/gemini-key/validate", json={"api_key": "AIzaSyKey12345"}).status_code == 401
+    assert client.post("/api/v1/customers/me/gemini-key/validate", json={"api_key": "test-only-fake-gemini-key-material-unauth2"}).status_code == 401
 
 
 # ---------------------------------------------------------------------------
@@ -525,7 +525,7 @@ def test_rate_limiting_protects_validation_requests(test_setup):
     client.app.state.settings.gemini_key_validation_rate_limit_per_minute = 2
     client.app.state.settings.auth_rate_limit_window_seconds = 60
 
-    payload = {"api_key": "AIzaSyTestValidationRateLimit12345"}
+    payload = {"api_key": "test-only-fake-gemini-key-material-ratelimit"}
 
     # Attempt 1 -> allowed
     res1 = client.post("/api/v1/customers/me/gemini-key/validate", json=payload, headers=headers)

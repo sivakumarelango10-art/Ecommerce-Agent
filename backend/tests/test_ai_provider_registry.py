@@ -548,7 +548,7 @@ def test_encryption_configuration_fails_safely_when_required(api_client):
 # 14. Personal encryption compatibility remains intact (Phase 6E.1.1 Scenario 10)
 # ---------------------------------------------------------------------------
 def test_personal_encryption_compatibility_remains_intact():
-    personal_key = "AIzaSyPersonalGeminiKey123456789"
+    personal_key = "test-only-fake-gemini-key-material-6789"
     user_ct = encrypt_user_key(personal_key, USER_TEST_SECRET)
 
     assert user_ct.startswith("v1:")
@@ -791,7 +791,7 @@ def test_platform_key_domain_separation_from_user_key():
 # 23. Platform key masking
 # ---------------------------------------------------------------------------
 def test_platform_key_masking():
-    assert mask_platform_key("AIzaSyB1234567890abcdef") == "...cdef"
+    assert mask_platform_key("test-only-fake-gemini-key-material-cdef") == "...cdef"
     assert mask_platform_key("sk-test-live-key-9999") == "...9999"
     assert mask_platform_key("1234") == "****"
     assert mask_platform_key("12") == "****"
@@ -1139,7 +1139,7 @@ def test_audit_log_recorded_for_ai_registry_mutations_without_secrets(api_client
         )
 
     headers = auth_header(super_token)
-    secret_key_to_protect = "AIzaSySecretTokenShouldNeverAppearInAuditLogs12345"
+    secret_key_to_protect = "test-only-fake-gemini-key-material-audit-protect"
 
     # 1. Create provider
     p_res = client.post(

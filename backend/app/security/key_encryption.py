@@ -128,7 +128,7 @@ def mask_user_key(api_key: str) -> str:
     """Safely mask a Gemini API key displaying only the final four characters.
 
     Examples:
-        'AIzaSyB1234567890abcdef' -> '...cdef'
+        'fake-test-key-material-cdef' -> '...cdef'
         '1234' -> '****'
         '' -> '...'
     """

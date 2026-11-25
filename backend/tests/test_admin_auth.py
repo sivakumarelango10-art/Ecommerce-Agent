@@ -410,7 +410,7 @@ def test_audit_log_redacts_sensitive_keys(api_client):
     dirty_metadata = {
         "user_email": "clean@example.com",
         "password": "CleartextSecretPassword123!",
-        "api_key": "AIzaSySuperConfidentialKey",
+        "api_key": "test-only-fake-gemini-key-material-4130",
         "auth_token": "bearer-secret-token",
         "user_prompt": "Confidential customer question",
         "key_hint": "9999",  # Safe exception
@@ -544,7 +544,7 @@ def test_nested_metadata_secret_values_are_redacted(api_client):
     session_factory = client.app.state.db_session_factory
 
     metadata_with_innocent_keys = {
-        "notes": "User supplied API key AIzaSyD-fake-key-with-thirty-five-chars-1234 in ticket.",
+        "notes": "User supplied API key FAKE_API_KEY_google_gemini_35charslong_1234 in ticket.",
         "description": "Auth header used: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J_wStmWBWnQ_3eQ2mB8p_m7bB1_h8m6b8.",
         "ordinary_text": "This is a completely normal customer comment.",
         "key_hint": "4321",
@@ -555,7 +555,7 @@ def test_nested_metadata_secret_values_are_redacted(api_client):
         },
         "audit_list": [
             "Normal log entry",
-            "Nested API key: AIzaSyAnotherFakeGeminiApiKeyThirtyFiveCharsLong",
+            "Nested API key: FAKE_API_KEY_google_gemini_another_fake_key_long",
             {"step": "Raw JWT: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J_wStmWBWnQ_3eQ2mB8p_m7bB1_h8m6b8"},
         ],
     }
@@ -564,7 +564,7 @@ def test_nested_metadata_secret_values_are_redacted(api_client):
     assert sanitized is not None
 
     # Secrets under innocent keys must be redacted
-    assert "AIzaSyD" not in sanitized["notes"]
+    assert "FAKE_API_KEY" not in sanitized["notes"]
     assert "[REDACTED_SECRET]" in sanitized["notes"]
     assert "User supplied API key [REDACTED_SECRET] in ticket." == sanitized["notes"]
 
@@ -581,7 +581,7 @@ def test_nested_metadata_secret_values_are_redacted(api_client):
     # List items must be sanitized
     assert sanitized["audit_list"][0] == "Normal log entry"
     assert "[REDACTED_SECRET]" in sanitized["audit_list"][1]
-    assert "AIzaSy" not in sanitized["audit_list"][1]
+    assert "FAKE_API_KEY" not in sanitized["audit_list"][1]
     assert "[REDACTED_SECRET]" in sanitized["audit_list"][2]["step"]
 
     # Ordinary text and safe exceptions must remain intact
@@ -601,7 +601,7 @@ def test_nested_metadata_secret_values_are_redacted(api_client):
 
         saved = session.get(AdminAuditLog, entry.id)
         assert saved is not None
-        assert "AIza" not in str(saved.metadata_json)
+        assert "FAKE_API_KEY" not in str(saved.metadata_json)
         assert "eyJ" not in str(saved.metadata_json)
         assert "$argon2id$" not in str(saved.metadata_json)
         assert "v1:gAAAAAB" not in str(saved.metadata_json)

@@ -27,7 +27,7 @@ VALID_ALT_SECRET = SecretStr("alt-test-encryption-secret-32-bytes-long-987654321
 
 def test_encryption_decryption_round_trip():
     """Verify that an API key can be encrypted and cleanly decrypted with the correct secret."""
-    raw_key = "AIzaSyB1234567890abcdefghijklmnopqrstuv"
+    raw_key = "test-only-fake-gemini-key-material-0123456789"
     ciphertext = encrypt_user_key(raw_key, VALID_TEST_SECRET)
 
     assert ciphertext.startswith(f"{CURRENT_CIPHERTEXT_VERSION}:")
@@ -37,8 +37,8 @@ def test_encryption_decryption_round_trip():
 
 def test_different_plaintext_produces_distinct_ciphertext():
     """Verify different plaintext keys produce distinct ciphertext strings."""
-    key1 = "AIzaSyKeyOne1234567890abcdefghijkl"
-    key2 = "AIzaSyKeyTwo9876543210zyxwvutsrqpon"
+    key1 = "test-only-fake-gemini-key-material-one"
+    key2 = "test-only-fake-gemini-key-material-two"
 
     ct1 = encrypt_user_key(key1, VALID_TEST_SECRET)
     ct2 = encrypt_user_key(key2, VALID_TEST_SECRET)
@@ -48,7 +48,7 @@ def test_different_plaintext_produces_distinct_ciphertext():
 
 def test_same_plaintext_produces_distinct_ciphertext_due_to_iv():
     """Verify that Fernet nonces/timestamps ensure nondeterministic ciphertexts for identical plaintext."""
-    key = "AIzaSySameKeyEveryTime1234567890"
+    key = "test-only-fake-gemini-key-material-same"
 
     ct1 = encrypt_user_key(key, VALID_TEST_SECRET)
     ct2 = encrypt_user_key(key, VALID_TEST_SECRET)
@@ -64,7 +64,7 @@ def test_same_plaintext_produces_distinct_ciphertext_due_to_iv():
 
 def test_tampered_ciphertext_is_rejected():
     """Verify that any modification to ciphertext token fails authenticated decryption."""
-    raw_key = "AIzaSyTamperTest1234567890"
+    raw_key = "test-only-fake-gemini-key-material-tamper"
     ciphertext = encrypt_user_key(raw_key, VALID_TEST_SECRET)
 
     # Tamper with the middle of the token
@@ -78,7 +78,7 @@ def test_tampered_ciphertext_is_rejected():
 
 def test_wrong_secret_cannot_decrypt():
     """Verify decryption fails when attempted with a different secret."""
-    raw_key = "AIzaSyWrongSecretTest123456789"
+    raw_key = "test-only-fake-gemini-key-material-wrong"
     ciphertext = encrypt_user_key(raw_key, VALID_TEST_SECRET)
 
     with pytest.raises(KeyEncryptionError, match="corrupted, tampered with, or used wrong secret"):
@@ -106,7 +106,7 @@ def test_plaintext_is_never_included_in_exception_messages():
 
 def test_unsupported_version_prefix_is_rejected():
     """Verify that tokens with unsupported version tags are rejected."""
-    raw_key = "AIzaSyVersionTest123456789"
+    raw_key = "test-only-fake-gemini-key-material-version"
     valid_ct = encrypt_user_key(raw_key, VALID_TEST_SECRET)
     _, token = valid_ct.split(":", 1)
 
@@ -130,7 +130,7 @@ def test_missing_version_delimiter_is_rejected():
 
 def test_mask_user_key_displays_only_last_four_characters():
     """Verify that key masking never exposes the complete key and shows only the final 4 characters."""
-    full_key = "AIzaSyB1234567890abcdef"
+    full_key = "test-only-fake-gemini-key-material-cdef"
     masked = mask_user_key(full_key)
 
     assert masked == "...cdef"
@@ -185,7 +185,7 @@ def test_secret_reuse_with_auth_secret_key_is_rejected(monkeypatch):
 
 def test_secret_reuse_with_gemini_api_key_is_rejected(monkeypatch):
     """Verify USER_KEY_ENCRYPTION_SECRET cannot reuse GEMINI_API_KEY."""
-    shared_key = "AIzaSyReusedKeyMaterialThatIsAtLeast32BytesLong"
+    shared_key = "test-only-fake-gemini-key-material-reused-key"
     monkeypatch.setenv("GEMINI_API_KEY", shared_key)
     monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///:memory:")
     monkeypatch.setenv("AUTH_SECRET_KEY", "test-auth-secret-key-0123456789abcdef")
@@ -231,7 +231,7 @@ def test_user_gemini_settings_model_in_isolated_db():
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
 
-    raw_key = "AIzaSyTestUserKey1234567890abcdef"
+    raw_key = "test-only-fake-gemini-key-material-cdef"
     encrypted_ct = encrypt_user_key(raw_key, VALID_TEST_SECRET)
     hint = mask_user_key(raw_key)
 
