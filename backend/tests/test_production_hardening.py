@@ -91,6 +91,8 @@ def test_security_headers_present_on_all_responses(api_client):
 
     res = client.get("/health")
     assert res.status_code == 200
+    assert "application/json" in res.headers["content-type"].lower()
+    assert "charset=utf-8" in res.headers["content-type"].lower()
     assert res.headers["x-content-type-options"] == "nosniff"
     assert res.headers["x-frame-options"] == "DENY"
     assert res.headers["referrer-policy"] == "strict-origin-when-cross-origin"

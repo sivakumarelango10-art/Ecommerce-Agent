@@ -1,6 +1,7 @@
+from dataclasses import dataclass
 import json
 from typing import Any
-from pydantic import Field, SecretStr, ValidationError, field_validator
+from pydantic import Field, PrivateAttr, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
@@ -15,6 +16,12 @@ class ConfigurationError(RuntimeError):
     """Raised when required application configuration is missing or invalid."""
 
 
+@dataclass(frozen=True)
+class GeminiKeyConfig:
+    key: SecretStr
+    quota_group: str
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -22,7 +29,19 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    gemini_api_key: SecretStr = Field(validation_alias="GEMINI_API_KEY")
+    gemini_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="GEMINI_API_KEY",
+    )
+    gemini_api_keys: SecretStr | str | list[dict[str, Any]] | None = Field(
+        default=None,
+        validation_alias="GEMINI_API_KEYS",
+    )
+    _platform_gemini_keys: list[GeminiKeyConfig] = PrivateAttr(default_factory=list)
+
+    @property
+    def platform_gemini_keys(self) -> list[GeminiKeyConfig]:
+        return self._platform_gemini_keys
     gemini_model: str = Field(
         default="gemini-3.8-flash",
         min_length=1,
@@ -53,6 +72,14 @@ class Settings(BaseSettings):
     otp_hash_secret: SecretStr | None = Field(
         default=None,
         validation_alias="OTP_HASH_SECRET",
+    )
+    user_key_encryption_secret: SecretStr | None = Field(
+        default=None,
+        validation_alias="USER_KEY_ENCRYPTION_SECRET",
+    )
+    platform_key_encryption_secret: SecretStr | None = Field(
+        default=None,
+        validation_alias="PLATFORM_KEY_ENCRYPTION_SECRET",
     )
     smtp_host: str | None = Field(
         default=None,
@@ -133,11 +160,16 @@ class Settings(BaseSettings):
         gt=0,
         validation_alias="AUTH_RATE_LIMIT_WINDOW_SECONDS",
     )
+    gemini_key_validation_rate_limit_per_minute: int = Field(
+        default=5,
+        gt=0,
+        validation_alias="GEMINI_KEY_VALIDATION_RATE_LIMIT_PER_MINUTE",
+    )
 
     @field_validator("gemini_api_key")
     @classmethod
-    def api_key_must_not_be_blank(cls, value: SecretStr) -> SecretStr:
-        if not value.get_secret_value().strip():
+    def api_key_must_not_be_blank(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is not None and not value.get_secret_value().strip():
             raise ValueError("GEMINI_API_KEY must not be blank")
         return value
 
@@ -193,6 +225,142 @@ class Settings(BaseSettings):
             if len(raw.encode("utf-8")) < 16:
                 raise ValueError("OTP_HASH_SECRET must be at least 16 bytes")
         return value
+
+    @field_validator("user_key_encryption_secret")
+    @classmethod
+    def user_key_encryption_secret_must_be_adequate(
+        cls, value: SecretStr | None
+    ) -> SecretStr | None:
+        if value is not None:
+            raw = value.get_secret_value().strip()
+            if not raw:
+                raise ValueError("USER_KEY_ENCRYPTION_SECRET must not be blank if provided")
+            if len(raw.encode("utf-8")) < 32:
+                raise ValueError("USER_KEY_ENCRYPTION_SECRET must be at least 32 bytes")
+        return value
+
+    @model_validator(mode="after")
+    def validate_gemini_keys_and_pool(self) -> "Settings":
+        raw_keys = self.gemini_api_keys
+        entries: list[dict[str, Any]] | None = None
+
+        if raw_keys is not None:
+            if isinstance(raw_keys, SecretStr):
+                raw_str = raw_keys.get_secret_value().strip()
+            elif isinstance(raw_keys, str):
+                raw_str = raw_keys.strip()
+            else:
+                raw_str = None
+
+            if raw_str is not None:
+                if not raw_str:
+                    entries = None
+                else:
+                    try:
+                        parsed = json.loads(raw_str)
+                    except Exception:
+                        raise ValueError("GEMINI_API_KEYS must be a valid JSON array") from None
+                    if not isinstance(parsed, list):
+                        raise ValueError("GEMINI_API_KEYS must be a JSON array")
+                    entries = parsed
+            elif isinstance(raw_keys, list):
+                entries = raw_keys
+            else:
+                raise ValueError("GEMINI_API_KEYS must be a JSON array")
+
+        key_configs: list[GeminiKeyConfig] = []
+
+        if entries is not None:
+            if len(entries) == 0:
+                raise ValueError("GEMINI_API_KEYS must not be empty if provided")
+            if len(entries) > 6:
+                raise ValueError("GEMINI_API_KEYS must contain at most 6 keys")
+
+            seen_keys: set[str] = set()
+            for item in entries:
+                if not isinstance(item, dict):
+                    raise ValueError("Each entry in GEMINI_API_KEYS must be a JSON object with 'key' and 'quota_group'")
+                if "key" not in item or "quota_group" not in item:
+                    raise ValueError("Each entry in GEMINI_API_KEYS must contain 'key' and 'quota_group'")
+
+                raw_k = item["key"]
+                if isinstance(raw_k, SecretStr):
+                    k_str = raw_k.get_secret_value().strip()
+                elif isinstance(raw_k, str):
+                    k_str = raw_k.strip()
+                else:
+                    raise ValueError("API key in GEMINI_API_KEYS must be a non-blank string")
+
+                if not k_str:
+                    raise ValueError("API key in GEMINI_API_KEYS must not be blank")
+
+                raw_group = item["quota_group"]
+                if not isinstance(raw_group, str) or not raw_group.strip():
+                    raise ValueError("quota_group in GEMINI_API_KEYS must be a non-blank string")
+                group_str = raw_group.strip()
+
+                if k_str in seen_keys:
+                    raise ValueError("GEMINI_API_KEYS contains duplicate API keys")
+                seen_keys.add(k_str)
+                key_configs.append(GeminiKeyConfig(key=SecretStr(k_str), quota_group=group_str))
+
+        elif self.gemini_api_key is not None and self.gemini_api_key.get_secret_value().strip():
+            # Legacy single key backward compatibility
+            key_configs = [
+                GeminiKeyConfig(
+                    key=self.gemini_api_key,
+                    quota_group="default",
+                )
+            ]
+        else:
+            raise ValueError("Either GEMINI_API_KEY or GEMINI_API_KEYS must be provided")
+
+        self._platform_gemini_keys = key_configs
+
+        # Ensure self.gemini_api_key is populated with at least the first key for backward compatibility
+        if self.gemini_api_key is None or not self.gemini_api_key.get_secret_value().strip():
+            self.gemini_api_key = key_configs[0].key
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_user_key_encryption_secret_rules(self) -> "Settings":
+        env = self.environment.strip().lower()
+        if env in {"staging", "production"}:
+            if self.user_key_encryption_secret is None or not self.user_key_encryption_secret.get_secret_value().strip():
+                raise ValueError("USER_KEY_ENCRYPTION_SECRET is required in staging and production")
+
+        if self.user_key_encryption_secret is not None:
+            enc_val = self.user_key_encryption_secret.get_secret_value().strip()
+            if not enc_val or len(enc_val.encode("utf-8")) < 32:
+                raise ValueError("USER_KEY_ENCRYPTION_SECRET must be at least 32 bytes")
+            if hasattr(self, "auth_secret_key") and self.auth_secret_key:
+                if enc_val == self.auth_secret_key.get_secret_value().strip():
+                    raise ValueError("USER_KEY_ENCRYPTION_SECRET must not reuse AUTH_SECRET_KEY")
+            if self.gemini_api_key is not None:
+                if enc_val == self.gemini_api_key.get_secret_value().strip():
+                    raise ValueError("USER_KEY_ENCRYPTION_SECRET must not reuse GEMINI_API_KEY")
+            for k in self.platform_gemini_keys:
+                if enc_val == k.key.get_secret_value().strip():
+                    raise ValueError("USER_KEY_ENCRYPTION_SECRET must not reuse GEMINI_API_KEY")
+
+        if self.platform_key_encryption_secret is not None:
+            plat_val = self.platform_key_encryption_secret.get_secret_value().strip()
+            if not plat_val or len(plat_val.encode("utf-8")) < 32:
+                raise ValueError("PLATFORM_KEY_ENCRYPTION_SECRET must be at least 32 bytes")
+            if hasattr(self, "auth_secret_key") and self.auth_secret_key:
+                if plat_val == self.auth_secret_key.get_secret_value().strip():
+                    raise ValueError("PLATFORM_KEY_ENCRYPTION_SECRET must not reuse AUTH_SECRET_KEY")
+            if self.user_key_encryption_secret is not None:
+                if plat_val == self.user_key_encryption_secret.get_secret_value().strip():
+                    raise ValueError("PLATFORM_KEY_ENCRYPTION_SECRET must not reuse USER_KEY_ENCRYPTION_SECRET")
+            if self.gemini_api_key is not None:
+                if plat_val == self.gemini_api_key.get_secret_value().strip():
+                    raise ValueError("PLATFORM_KEY_ENCRYPTION_SECRET must not reuse GEMINI_API_KEY")
+            for k in self.platform_gemini_keys:
+                if plat_val == k.key.get_secret_value().strip():
+                    raise ValueError("PLATFORM_KEY_ENCRYPTION_SECRET must not reuse GEMINI_API_KEY")
+        return self
 
     @field_validator("allowed_origins")
     @classmethod

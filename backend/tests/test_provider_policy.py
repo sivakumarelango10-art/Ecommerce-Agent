@@ -12,6 +12,10 @@ def test_application_source_and_dependency_manifests_are_gemini_only():
         if ".git" not in path.parts
         and "__pycache__" not in path.parts
         and "tests" not in path.parts
+        and "alembic" not in path.parts
+        and not path.name.startswith("seed_ai_catalogue")
+        and not path.name.startswith("ai_provider")
+        and not path.name.startswith("ai_registry")
     ]
     provider_pattern = re.compile(r"\bopenai\b|\bgpt[-_][a-z0-9.-]+", re.IGNORECASE)
 

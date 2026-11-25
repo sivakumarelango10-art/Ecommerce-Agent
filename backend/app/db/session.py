@@ -9,7 +9,9 @@ from sqlalchemy.pool import StaticPool
 
 def create_database_engine(database_url: str) -> Engine:
     engine_options: dict[str, object] = {"pool_pre_ping": True}
-    if database_url.startswith("sqlite"):
+    if database_url.startswith("postgresql"):
+        engine_options["connect_args"] = {"client_encoding": "utf8"}
+    elif database_url.startswith("sqlite"):
         engine_options["connect_args"] = {"check_same_thread": False}
         if database_url.endswith(":memory:"):
             engine_options["poolclass"] = StaticPool

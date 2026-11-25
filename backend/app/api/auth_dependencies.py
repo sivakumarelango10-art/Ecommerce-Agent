@@ -46,6 +46,36 @@ def get_current_user(
     return user
 
 
+def require_admin_user(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """Verify authenticated user possesses admin or super_admin privileges.
+
+    Always re-checks the user's active database record on every request.
+    """
+    if current_user.role not in ("admin", "super_admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrative privileges required.",
+        )
+    return current_user
+
+
+def require_super_admin_user(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """Verify authenticated user possesses super_admin privileges.
+
+    Always re-checks the user's active database record on every request.
+    """
+    if current_user.role != "super_admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Super administrator privileges required.",
+        )
+    return current_user
+
+
 def get_optional_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),

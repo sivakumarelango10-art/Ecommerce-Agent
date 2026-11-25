@@ -9,11 +9,13 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
+from backend.app.api.routes.admin import router as admin_router
 from backend.app.api.routes.auth import router as auth_router
 from backend.app.api.routes.cart import router as cart_router
 from backend.app.api.routes.catalog import router as catalog_router
 from backend.app.api.routes.checkout import router as checkout_router
 from backend.app.api.routes.customers import router as customers_router
+from backend.app.api.routes.gemini_settings import router as gemini_settings_router
 from backend.app.api.routes.health import router as health_router
 from backend.app.api.routes.orders import router as orders_router
 from backend.app.api.routes.questions import router as questions_router
@@ -121,7 +123,9 @@ def create_app(
 
     application.include_router(health_router)
     application.include_router(auth_router, prefix="/api/v1")
+    application.include_router(admin_router, prefix="/api/v1")
     application.include_router(customers_router, prefix="/api/v1")
+    application.include_router(gemini_settings_router, prefix="/api/v1")
     application.include_router(catalog_router, prefix="/api/v1")
     application.include_router(cart_router, prefix="/api/v1")
     application.include_router(checkout_router, prefix="/api/v1")

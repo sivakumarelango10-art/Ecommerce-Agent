@@ -45,7 +45,7 @@ def compute_rate_limit_hash(value: str) -> str:
 def check_and_record_auth_rate_limit(
     session: Session,
     request: Request,
-    action: Literal["login", "register"],
+    action: Literal["login", "register", "gemini_key_validate"],
     identifier: str | None = None,
     settings: Settings | None = None,
 ) -> None:
@@ -82,8 +82,10 @@ def check_and_record_auth_rate_limit(
     if settings:
         if action == "login":
             limit_per_minute = settings.auth_rate_limit_login_per_minute
-        else:
+        elif action == "register":
             limit_per_minute = settings.auth_rate_limit_register_per_minute
+        elif action == "gemini_key_validate":
+            limit_per_minute = getattr(settings, "gemini_key_validation_rate_limit_per_minute", 5)
         window_seconds = settings.auth_rate_limit_window_seconds
 
     client_ip = extract_client_ip(request)
@@ -134,9 +136,14 @@ def check_and_record_auth_rate_limit(
                     "retry_after": retry_after,
                 },
             )
+            detail_message = (
+                "Too many key validation requests. Please try again later."
+                if action == "gemini_key_validate"
+                else "Too many authentication attempts. Please try again later."
+            )
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Too many authentication attempts. Please try again later.",
+                detail=detail_message,
                 headers={"Retry-After": str(retry_after)},
             )
 

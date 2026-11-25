@@ -21,7 +21,11 @@ class InvalidCredentialsError(Exception):
 
 def register_user(session: Session, request: RegisterRequest) -> User:
     email = str(request.email).strip().lower()
-    user = User(email=email, password_hash=hash_password(request.password))
+    user = User(
+        email=email,
+        password_hash=hash_password(request.password),
+        role="customer",
+    )
     user.profile = CustomerProfile(display_name=request.display_name)
     session.add(user)
     try:

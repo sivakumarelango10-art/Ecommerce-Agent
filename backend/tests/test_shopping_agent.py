@@ -32,10 +32,14 @@ from backend.app.services.gemini_service import (
     GeminiServiceError,
     GeminiTimeoutError,
 )
-from backend.app.services.product_discovery_service import search_catalogue_products
+from backend.app.services.product_discovery_service import (
+    get_term_search_variants,
+    search_catalogue_products,
+)
 from backend.app.services.shopping_agent import (
     ShoppingAgent,
     _fallback_extract_intent,
+    normalize_search_keywords,
 )
 from backend.app.services.supervisor_agent import SupervisorAgent
 
@@ -1558,3 +1562,215 @@ def test_supervisor_chat_with_gemini_intent_extraction_error_returns_catalogue_p
     assert result.shopping_response.total_count >= 1
     found = next((p for p in result.shopping_response.products if p.sku == "NOISE-TW-100"), None)
     assert found is not None
+
+
+# ---------------------------------------------------------------------------
+# 13. Natural-Language Search Keyword Extraction & Catalogue Regression Tests
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def seeded_catalogue_session():
+    """Create an isolated in-memory SQLite database populated with the official 26-product catalogue."""
+    from backend.scripts.seed_catalogue import seed_catalogue
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        seed_catalogue(session, dry_run=False)
+        yield session
+    engine.dispose()
+
+
+def test_natural_language_query_with_conversational_words_matches_direct_query(seeded_catalogue_session: Session):
+    """Bug regression test:
+    Query 1: 'I need wireless headphones under 10000 rupees. Recommend the best available option.'
+    Query 2: 'Find wireless headphones under 10000'
+    Both queries must extract clean keywords ['wireless', 'headphones'], set in_stock_only=True,
+    and return identical catalogue products including SoundSilence ANC Wireless Headphones (₹8,999.00).
+    """
+    agent = ShoppingAgent(gemini_service=None, catalogue_currency="INR")
+
+    # 1. Natural language query with conversational verbs, qualifiers, currency, and availability request
+    req1 = ShoppingSearchRequest(query="I need wireless headphones under 10000 rupees. Recommend the best available option.")
+    res1 = agent.search(req1, seeded_catalogue_session)
+
+    assert res1.status == "success"
+    assert res1.total_count >= 1
+    prod1 = res1.products[0]
+    assert prod1.sku == "AUDIO-WH-ANC500"
+    assert prod1.name == "SoundSilence ANC Wireless Headphones"
+    assert prod1.price == Decimal("8999.00")
+    assert prod1.in_stock is True
+
+    # 2. Direct concise query
+    req2 = ShoppingSearchRequest(query="Find wireless headphones under 10000")
+    res2 = agent.search(req2, seeded_catalogue_session)
+
+    assert res2.status == "success"
+    assert res2.total_count >= 1
+    prod2 = res2.products[0]
+    assert prod2.sku == "AUDIO-WH-ANC500"
+    assert prod2.name == "SoundSilence ANC Wireless Headphones"
+    assert prod2.price == Decimal("8999.00")
+
+    # 3. Assert matching results
+    skus_1 = [p.sku for p in res1.products]
+    skus_2 = [p.sku for p in res2.products]
+    assert skus_1 == skus_2, f"Expected matching results for both queries, got {skus_1} vs {skus_2}"
+
+
+def test_bluetooth_headphones_query_finds_soundsilence(seeded_catalogue_session: Session):
+    """Regression Query 3: 'Best Bluetooth headphones below 10000'
+    Must strip 'best' and 'below', extract 'bluetooth' and 'headphones', and return
+    SoundSilence ANC Wireless Headphones whose description contains Bluetooth.
+    """
+    agent = ShoppingAgent(gemini_service=None, catalogue_currency="INR")
+    req = ShoppingSearchRequest(query="Best Bluetooth headphones below 10000")
+    res = agent.search(req, seeded_catalogue_session)
+
+    assert res.status == "success"
+    assert res.total_count >= 1
+    found = next((p for p in res.products if p.sku == "AUDIO-WH-ANC500"), None)
+    assert found is not None
+    assert found.name == "SoundSilence ANC Wireless Headphones"
+    assert found.price == Decimal("8999.00")
+
+
+def test_noise_cancelling_headphones_query(seeded_catalogue_session: Session):
+    """Regression Query 4: 'I want noise cancelling headphones'
+    Must match products containing multi-word phrase 'noise cancelling' (SoundSilence ANC and ClearTone Pro).
+    """
+    agent = ShoppingAgent(gemini_service=None, catalogue_currency="INR")
+    req = ShoppingSearchRequest(query="I want noise cancelling headphones")
+    res = agent.search(req, seeded_catalogue_session)
+
+    assert res.status == "success"
+    assert res.total_count >= 1
+    skus = [p.sku for p in res.products]
+    assert "AUDIO-WH-ANC500" in skus
+
+
+def test_gaming_laptops_budget_exclusion_and_plural_inflection(seeded_catalogue_session: Session):
+    """Regression Query 5: 'Find gaming laptops under 80000'
+    Catalogue has 'Vortex Gaming Laptop 16-inch 165Hz' priced at ₹94,999.00.
+    - Under budget 80000: must return 0 results (strict budget enforcement).
+    - Under budget 100000: must return Vortex Gaming Laptop (plural inflection 'laptops' -> 'laptop').
+    """
+    agent = ShoppingAgent(gemini_service=None, catalogue_currency="INR")
+
+    # Strict budget: ₹80,000 max budget should exclude ₹94,999 laptop
+    req_80k = ShoppingSearchRequest(query="Find gaming laptops under 80000")
+    res_80k = agent.search(req_80k, seeded_catalogue_session)
+    assert res_80k.status == "no_results" or res_80k.total_count == 0
+
+    # Sufficient budget: ₹100,000 max budget should include ₹94,999 laptop via plural inflection
+    req_100k = ShoppingSearchRequest(query="Find gaming laptops under 100000")
+    res_100k = agent.search(req_100k, seeded_catalogue_session)
+    assert res_100k.status == "success"
+    assert res_100k.total_count >= 1
+    vortex = next((p for p in res_100k.products if p.sku == "LAPTOP-VORTEX-16"), None)
+    assert vortex is not None
+    assert vortex.name == "Vortex Gaming Laptop 16-inch 165Hz"
+    assert vortex.price == Decimal("94999.00")
+
+
+def test_keyword_normalization_removes_conversational_fillers():
+    """Unit test: normalize_search_keywords filters generic conversational words while keeping tech terms."""
+    raw = ["need", "wireless", "headphones", "under", "10000", "rupees", "recommend", "best", "available", "option"]
+    cleaned = normalize_search_keywords(raw)
+    assert cleaned == ["wireless", "headphones"]
+
+    # Preserves technical terms and multi-word phrases
+    tech_raw = ["noise cancelling", "bluetooth", "5g", "anc", "gaming", "battery life"]
+    assert normalize_search_keywords(tech_raw) == ["noise cancelling", "bluetooth", "5g", "anc", "gaming", "battery life"]
+
+    # Handles punctuation and empty tokens
+    dirty_raw = ["wireless,", "headphones!", "", "   ", "option?"]
+    assert normalize_search_keywords(dirty_raw) == ["wireless", "headphones"]
+
+
+def test_term_search_variants_inflection_and_hyphenation():
+    """Unit test: get_term_search_variants produces singular/plural and hyphen variants."""
+    assert "laptop" in get_term_search_variants("laptops")
+    assert "laptops" in get_term_search_variants("laptop")
+    assert "headphone" in get_term_search_variants("headphones")
+    assert "headphones" in get_term_search_variants("headphone")
+    assert "smartwatch" in get_term_search_variants("smartwatches")
+    assert "smartwatches" in get_term_search_variants("smartwatch")
+    assert "noise cancelling" in get_term_search_variants("noise-cancelling")
+    assert "noise-cancelling" in get_term_search_variants("noise cancelling")
+
+
+def test_utf8_currency_symbol_and_header_preservation(seeded_catalogue_session: Session):
+    """Test that Indian Rupee symbol (₹ / U+20B9) is preserved in recommendation output without encoding distortion."""
+    agent = ShoppingAgent(gemini_service=None, catalogue_currency="INR")
+    req = ShoppingSearchRequest(query="Find wireless headphones under 10000")
+    res = agent.search(req, seeded_catalogue_session)
+
+    assert res.status == "success"
+    prod = res.products[0]
+    assert prod.currency == "INR"
+    assert "₹" in prod.recommendation_reason
+    # Verify exact UTF-8 byte encoding
+    raw_bytes = prod.recommendation_reason.encode("utf-8")
+    assert b"\xe2\x82\xb9" in raw_bytes  # UTF-8 bytes for ₹
+    # Verify no Latin-1 mojibake (â¹)
+    assert "â¹" not in prod.recommendation_reason
+
+
+def test_fallback_extract_intent_availability_requested_sets_in_stock_only():
+    """Verify availability terms ('available', 'in stock') in query set in_stock_only=True."""
+    # 1. 'Find available wireless headphones' -> in_stock_only=True
+    intent_avail = _fallback_extract_intent("Find available wireless headphones")
+    assert intent_avail.in_stock_only is True
+    assert intent_avail.keywords == ["wireless", "headphones"]
+
+    # 2. 'Find wireless headphones in stock' -> in_stock_only=True
+    intent_stock = _fallback_extract_intent("Find wireless headphones in stock")
+    assert intent_stock.in_stock_only is True
+    assert intent_stock.keywords == ["wireless", "headphones"]
+
+
+def test_fallback_extract_intent_without_availability_preserves_default_null():
+    """Verify queries without explicit availability phrasing preserve the intended default/null in_stock_only."""
+    intent_plain = _fallback_extract_intent("Find wireless headphones")
+    assert intent_plain.in_stock_only is None
+    assert intent_plain.keywords == ["wireless", "headphones"]
+
+
+def test_shopping_search_explicit_api_stock_filter_precedence_over_fallback_intent(isolated_db: Session):
+    """Verify explicit API request stock filter retains precedence over fallback extracted availability intent."""
+    agent = ShoppingAgent(gemini_service=None, catalogue_currency="USD")
+
+    # 1. Query has 'available' (fallback intent.in_stock_only=True), but explicit API request specifies in_stock_only=False
+    # Explicit request in_stock_only=False must take precedence and include out-of-stock Adidas (qty=0)
+    req_override = ShoppingSearchRequest(query="Find available running shoes", in_stock_only=False)
+    res_override = agent.search(req_override, isolated_db)
+    skus_override = {p.sku for p in res_override.products}
+    assert "ADI-UB-01" in skus_override
+    assert "NIKE-AZ-01" in skus_override
+
+    # 2. Query has 'available' (fallback intent.in_stock_only=True) and API request leaves in_stock_only=None
+    # Extracted intent in_stock_only=True is applied, excluding out-of-stock Adidas
+    req_intent = ShoppingSearchRequest(query="Find available running shoes")
+    assert req_intent.in_stock_only is None
+    res_intent = agent.search(req_intent, isolated_db)
+    skus_intent = {p.sku for p in res_intent.products}
+    assert "ADI-UB-01" not in skus_intent
+    assert "NIKE-AZ-01" in skus_intent
+
+    # 3. Query has no availability (fallback intent.in_stock_only=None), explicit request specifies in_stock_only=False
+    # Explicit request in_stock_only=False is applied, including out-of-stock Adidas
+    req_plain_override = ShoppingSearchRequest(query="Find running shoes", in_stock_only=False)
+    res_plain_override = agent.search(req_plain_override, isolated_db)
+    skus_plain_override = {p.sku for p in res_plain_override.products}
+    assert "ADI-UB-01" in skus_plain_override
+
+    # 4. Query has no availability (fallback intent.in_stock_only=None) and request has in_stock_only=None
+    # Falls through to safe default (True), excluding out-of-stock Adidas
+    req_plain_default = ShoppingSearchRequest(query="Find running shoes")
+    assert req_plain_default.in_stock_only is None
+    res_plain_default = agent.search(req_plain_default, isolated_db)
+    skus_plain_default = {p.sku for p in res_plain_default.products}
+    assert "ADI-UB-01" not in skus_plain_default
+    assert "NIKE-AZ-01" in skus_plain_default

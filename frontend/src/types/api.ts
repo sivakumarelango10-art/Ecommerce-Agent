@@ -4,6 +4,7 @@ export interface UserResponse {
   id: string; // Backend UUID
   email: string;
   is_active: boolean;
+  role?: string;
   created_at?: string;
 }
 
@@ -172,4 +173,35 @@ export interface ChatMessage {
   generalAnswer?: string | null;
   referencedOrderNumbers?: string[];
   isError?: boolean;
+}
+
+export interface PersonalGeminiKeyResponse {
+  has_key: boolean;
+  is_enabled: boolean;
+  key_hint: string | null;
+  status: string | null;
+  last_validated_at: string | null;
+  last_used_at: string | null;
+  cooldown_until: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface SavePersonalGeminiKeyRequest {
+  api_key: string;
+}
+
+export interface ValidatePersonalGeminiKeyRequest {
+  api_key: string;
+}
+
+export interface TogglePersonalGeminiKeyRequest {
+  is_enabled: boolean;
+}
+
+export interface ValidatePersonalGeminiKeyResponse {
+  is_valid: boolean;
+  status: 'VALID' | 'INVALID_KEY' | 'QUOTA_EXHAUSTED' | 'MODEL_UNAVAILABLE' | 'TEMPORARY_FAILURE' | string;
+  message: string;
+  masked_key?: string | null;
 }

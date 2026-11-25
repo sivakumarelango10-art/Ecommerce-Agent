@@ -15,6 +15,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["X-XSS-Protection"] = "1; mode=block"
 
+        # Explicitly enforce UTF-8 charset on JSON responses to prevent client/proxy decoding to ISO-8859-1
+        content_type = response.headers.get("content-type", "")
+        if "application/json" in content_type and "charset" not in content_type:
+            response.headers["content-type"] = f"{content_type}; charset=utf-8"
+
         # Content-Security-Policy
         # Configured to permit Vite/React development assets and API calls while strictly forbidding frame injection and plugins
         response.headers["Content-Security-Policy"] = (
