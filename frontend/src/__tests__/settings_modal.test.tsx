@@ -22,6 +22,7 @@ function renderWithAuth(
     register: vi.fn(),
     logout: vi.fn(),
     clearError: vi.fn(),
+    setUserRole: vi.fn(),
   };
 
   const authValue = { ...defaultAuth, ...authOverrides };

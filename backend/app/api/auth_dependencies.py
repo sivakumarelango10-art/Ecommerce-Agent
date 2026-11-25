@@ -76,6 +76,23 @@ def require_super_admin_user(
     return current_user
 
 
+def get_current_admin(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """Validate that the authenticated active user is on the admin allowlist."""
+    settings = getattr(request.app.state, "settings", None)
+    admin_emails: set[str] = getattr(settings, "admin_emails", None) or set()
+
+    user_email = (current_user.email or "").strip().lower()
+    if not admin_emails or user_email not in admin_emails:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges are required to access this resource.",
+        )
+    return current_user
+
+
 def get_optional_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),

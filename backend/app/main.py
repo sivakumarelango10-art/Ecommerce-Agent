@@ -17,6 +17,7 @@ from backend.app.api.routes.checkout import router as checkout_router
 from backend.app.api.routes.customers import router as customers_router
 from backend.app.api.routes.gemini_settings import router as gemini_settings_router
 from backend.app.api.routes.health import router as health_router
+from backend.app.api.routes.neon import router as neon_router
 from backend.app.api.routes.orders import router as orders_router
 from backend.app.api.routes.questions import router as questions_router
 from backend.app.api.routes.shopping import router as shopping_router
@@ -140,6 +141,7 @@ def create_app(
     application.add_middleware(SecurityHeadersMiddleware)
 
     application.include_router(health_router)
+    application.include_router(neon_router, prefix="/api/v1")
     application.include_router(auth_router, prefix="/api/v1")
     application.include_router(admin_router, prefix="/api/v1")
     application.include_router(customers_router, prefix="/api/v1")

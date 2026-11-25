@@ -315,7 +315,7 @@ describe('StoreFlow Phase 6E.2: Admin AI Control Centre Frontend Test Suite', ()
       return found;
     });
     vi.spyOn(api.admin.ai, 'createProvider').mockResolvedValue(mockProviders[0]);
-    vi.spyOn(api.admin.ai, 'updateProvider').mockImplementation(async (id: string, data: any) => ({
+    vi.spyOn(api.admin.ai, 'updateProvider').mockImplementation(async (_id: string, data: any) => ({
       ...mockProviders[0],
       ...data,
     }));

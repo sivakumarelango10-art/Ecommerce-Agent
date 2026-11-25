@@ -575,4 +575,41 @@ export const api = {
       },
     },
   },
+
+  neon: {
+    async status(token?: string): Promise<any> {
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(`${BASE_URL}/api/v1/neon/status`, { headers });
+      return handleResponse<any>(res);
+    },
+    async invokeHello(token?: string): Promise<{ status: string; response: string }> {
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(`${BASE_URL}/api/v1/neon/function/hello`, { headers });
+      return handleResponse<{ status: string; response: string }>(res);
+    },
+    async uploadAsset(key: string, content: string, contentType = 'text/plain', token?: string): Promise<any> {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(`${BASE_URL}/api/v1/neon/storage/upload`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ key, content, content_type: contentType }),
+      });
+      return handleResponse<any>(res);
+    },
+    async downloadAsset(key: string, token?: string): Promise<any> {
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(`${BASE_URL}/api/v1/neon/storage/download?key=${encodeURIComponent(key)}`, { headers });
+      return handleResponse<any>(res);
+    },
+    async getModels(token?: string): Promise<any> {
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(`${BASE_URL}/api/v1/neon/ai-gateway/models`, { headers });
+      return handleResponse<any>(res);
+    },
+  },
 };
