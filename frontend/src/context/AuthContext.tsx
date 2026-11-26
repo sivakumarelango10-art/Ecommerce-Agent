@@ -35,12 +35,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
       const tokenRes = await api.auth.login({ email, password });
       setAccessToken(tokenRes.access_token);
-      setCurrentUser({
-        id: '',
-        email: email,
-        is_active: true,
-        role: role || 'customer',
-      });
+
+      try {
+        const userProfile = await api.auth.getMe(tokenRes.access_token);
+        setCurrentUser(userProfile);
+      } catch {
+        setCurrentUser({
+          id: '',
+          email: email,
+          is_active: true,
+          role: role || 'customer',
+        });
+      }
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         setError(err.message);

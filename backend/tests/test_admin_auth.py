@@ -638,3 +638,45 @@ def test_audit_log_indexes_intact():
     assert "ix_admin_audit_logs_actor_created" in index_names
     assert "ix_admin_audit_logs_action_created" in index_names
 
+
+# ---------------------------------------------------------------------------
+# 23. /api/v1/auth/me returns authoritative profile and enforces authentication
+# ---------------------------------------------------------------------------
+def test_auth_me_returns_authoritative_user_profile(api_client):
+    client, _ = api_client
+    session_factory = client.app.state.db_session_factory
+    settings = client.app.state.settings
+
+    # Unauthenticated request returns 401
+    res = client.get("/api/v1/auth/me")
+    assert res.status_code == 401
+
+    with session_factory() as session:
+        cust, cust_tok = create_user_with_role(session, settings, "auth-me-cust@example.com", "customer")
+        adm, adm_tok = create_user_with_role(session, settings, "auth-me-adm@example.com", "admin")
+        sa, sa_tok = create_user_with_role(session, settings, "auth-me-sa@example.com", "super_admin")
+        inact, inact_tok = create_user_with_role(session, settings, "auth-me-inact@example.com", "admin", is_active=False)
+
+    # Customer profile contains verified role
+    res_c = client.get("/api/v1/auth/me", headers=auth_header(cust_tok))
+    assert res_c.status_code == 200
+    assert res_c.json()["email"] == "auth-me-cust@example.com"
+    assert res_c.json()["role"] == "customer"
+    assert res_c.json()["is_active"] is True
+
+    # Admin profile contains verified role
+    res_a = client.get("/api/v1/auth/me", headers=auth_header(adm_tok))
+    assert res_a.status_code == 200
+    assert res_a.json()["email"] == "auth-me-adm@example.com"
+    assert res_a.json()["role"] == "admin"
+
+    # Super admin profile contains verified role
+    res_s = client.get("/api/v1/auth/me", headers=auth_header(sa_tok))
+    assert res_s.status_code == 200
+    assert res_s.json()["email"] == "auth-me-sa@example.com"
+    assert res_s.json()["role"] == "super_admin"
+
+    # Inactive user is rejected
+    res_i = client.get("/api/v1/auth/me", headers=auth_header(inact_tok))
+    assert res_i.status_code == 401
+

@@ -796,6 +796,10 @@ describe('StoreFlow Phase 6E.2: Admin AI Control Centre Frontend Test Suite', ()
 
   // 19. Customer users receive a 403 Forbidden screen
   it('19. Customer users receive a 403 Forbidden screen when attempting access', async () => {
+    vi.spyOn(api.admin, 'getOverview').mockRejectedValueOnce(
+      new ApiError('Access restricted: You do not possess administrator privileges.', 403)
+    );
+
     renderWithAuth(
       <AdminGuard>
         <div data-testid="secret-ai-content">Protected AI Content</div>
@@ -805,10 +809,12 @@ describe('StoreFlow Phase 6E.2: Admin AI Control Centre Frontend Test Suite', ()
       }
     );
 
-    expect(screen.queryByTestId('secret-ai-content')).not.toBeInTheDocument();
-    expect(screen.getByText(/Access Denied \(403\)/i)).toBeInTheDocument();
-    expect(screen.getByText(/You do not possess administrator privileges/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Return to StoreFlow/i })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByTestId('secret-ai-content')).not.toBeInTheDocument();
+      expect(screen.getByText(/Access Denied \(403\)/i)).toBeInTheDocument();
+      expect(screen.getByText(/You do not possess administrator privileges/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Return to StoreFlow/i })).toBeInTheDocument();
+    });
   });
 
   // 20. Routing Preferences component remains explicitly inactive

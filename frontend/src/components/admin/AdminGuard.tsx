@@ -39,22 +39,26 @@ export const AdminGuard: React.FC<AdminGuardProps> = ({
         return;
       }
 
-      // If already cached as customer, reject immediately without unnecessary roundtrip
-      if (currentUser?.role === 'customer') {
-        if (isMounted) {
-          setIsVerifying(false);
-          setIsAuthorized(false);
-          setForbiddenError('Access restricted: You do not possess administrator privileges.');
-        }
-        return;
-      }
-
       setIsVerifying(true);
       setForbiddenError(null);
 
       try {
         // Backend API is the true authorization authority
         await api.admin.getOverview(accessToken);
+
+        // Sync verified role from backend if not yet set or outdated
+        if (currentUser?.role !== 'admin' && currentUser?.role !== 'super_admin') {
+          try {
+            const me = await api.auth.getMe(accessToken);
+            if (setUserRole && (me.role === 'admin' || me.role === 'super_admin')) {
+              setUserRole(me.role);
+            }
+          } catch {
+            // getOverview already passed, so user has at least admin authority
+            if (setUserRole) setUserRole('admin');
+          }
+        }
+
         if (isMounted) {
           setIsAuthorized(true);
           setIsVerifying(false);
@@ -121,7 +125,7 @@ export const AdminGuard: React.FC<AdminGuardProps> = ({
           <Button
             variant="primary"
             size="md"
-            onClick={onOpenLogin || (() => { if (typeof window !== 'undefined') window.location.href = '/'; })}
+            onClick={onOpenLogin}
             className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white gap-2"
           >
             <LogIn className="w-4 h-4" />

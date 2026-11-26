@@ -61,6 +61,26 @@ describe('API Client & Token Isolation', () => {
     expect(res.access_token).toBe('valid_jwt_token');
   });
 
+  it('api.auth.getMe fetches authenticated user profile with Authorization header', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({
+        id: 'user-uuid-123',
+        email: 'superadmin@example.com',
+        is_active: true,
+        role: 'super_admin',
+      }),
+    } as Response);
+
+    const res = await api.auth.getMe('test-admin-jwt-token');
+    expect(fetchSpy).toHaveBeenCalledWith('/api/v1/auth/me', {
+      headers: { Authorization: 'Bearer test-admin-jwt-token' },
+    });
+    expect(res.email).toBe('superadmin@example.com');
+    expect(res.role).toBe('super_admin');
+  });
+
   it('sends aligned registration payload with display_name', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: true,

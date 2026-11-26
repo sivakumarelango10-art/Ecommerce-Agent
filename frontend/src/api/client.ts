@@ -83,6 +83,13 @@ async function handleResponse<T>(res: Response): Promise<T> {
 
 export const api = {
   auth: {
+    async getMe(token: string): Promise<UserResponse> {
+      const res = await fetch(`${BASE_URL}/api/v1/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return handleResponse<UserResponse>(res);
+    },
+
     async register(data: RegisterRequest): Promise<UserResponse> {
       const res = await fetch(`${BASE_URL}/api/v1/auth/register`, {
         method: 'POST',

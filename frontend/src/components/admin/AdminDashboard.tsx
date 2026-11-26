@@ -15,11 +15,13 @@ import { AIProviderActivity } from './AIProviderActivity';
 export interface AdminDashboardProps {
   onBackToStore?: () => void;
   initialTab?: string;
+  onOpenLogin?: () => void;
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onBackToStore,
   initialTab = 'overview',
+  onOpenLogin,
 }) => {
   const [activeTab, setActiveTab] = useState<string>(initialTab);
 
@@ -79,7 +81,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   };
 
   return (
-    <AdminGuard onBackToStore={onBackToStore}>
+    <AdminGuard onBackToStore={onBackToStore} onOpenLogin={onOpenLogin}>
       <AdminLayout
         activeTab={activeTab}
         onTabChange={handleTabChange}

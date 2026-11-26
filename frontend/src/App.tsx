@@ -81,7 +81,10 @@ const MainApp: React.FC = () => {
       {/* Main View Switching */}
       {activeView === 'admin' ? (
         <div className="flex-1">
-          <AdminDashboard onBackToStore={() => setActiveView('chat')} />
+          <AdminDashboard
+            onBackToStore={() => setActiveView('chat')}
+            onOpenLogin={() => setIsAuthOpen(true)}
+          />
         </div>
       ) : (
         <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">

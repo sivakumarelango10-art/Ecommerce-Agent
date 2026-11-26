@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { AuthContext } from '../context/AuthContext';
 import { AdminGuard } from '../components/admin/AdminGuard';
+import { AdminDashboard } from '../components/admin/AdminDashboard';
 import { AdminLayout } from '../components/admin/AdminLayout';
 import { AdminOverview } from '../components/admin/AdminOverview';
 import { UserManagement } from '../components/admin/UserManagement';
@@ -343,9 +344,10 @@ describe('StoreFlow Phase 6D: Admin Dashboard Frontend Test Suite', () => {
   });
 
   // 1. AdminGuard blocks unauthenticated guests
-  it('1. AdminGuard blocks unauthenticated guests (redirects or renders sign-in prompt)', () => {
+  it('1. AdminGuard blocks unauthenticated guests and triggers onOpenLogin when clicking Sign In', () => {
+    const onOpenLoginMock = vi.fn();
     renderWithAuth(
-      <AdminGuard>
+      <AdminGuard onOpenLogin={onOpenLoginMock}>
         <div>Protected Admin Content</div>
       </AdminGuard>,
       { isAuthenticated: false, accessToken: null, currentUser: null }
@@ -354,10 +356,18 @@ describe('StoreFlow Phase 6D: Admin Dashboard Frontend Test Suite', () => {
     expect(screen.queryByText('Protected Admin Content')).not.toBeInTheDocument();
     expect(screen.getByText(/Administrator Login Required/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Return to Customer Store/i })).toBeInTheDocument();
+
+    const signInBtn = screen.getByRole('button', { name: /Sign In as Administrator/i });
+    fireEvent.click(signInBtn);
+    expect(onOpenLoginMock).toHaveBeenCalledTimes(1);
   });
 
   // 2. AdminGuard blocks authenticated users with role="customer" and shows 403 Forbidden screen
   it('2. AdminGuard blocks authenticated customers and renders safe 403 Forbidden screen', async () => {
+    vi.spyOn(api.admin, 'getOverview').mockRejectedValueOnce(
+      new ApiError('Access restricted: Administrator privileges required.', 403)
+    );
+
     renderWithAuth(
       <AdminGuard>
         <div>Protected Admin Content</div>
@@ -717,5 +727,71 @@ describe('StoreFlow Phase 6D: Admin Dashboard Frontend Test Suite', () => {
     );
     const adminBtns = screen.getAllByText(/Admin/i);
     expect(adminBtns.length).toBeGreaterThan(0);
+  });
+
+  // 16. AdminDashboard forwards onOpenLogin to AdminGuard
+  it('16. AdminDashboard forwards onOpenLogin to AdminGuard when unauthenticated', () => {
+    const handleOpenLogin = vi.fn();
+    renderWithAuth(
+      <AdminDashboard onOpenLogin={handleOpenLogin} />,
+      { isAuthenticated: false, accessToken: null, currentUser: null }
+    );
+
+    expect(screen.getByText(/Administrator Login Required/i)).toBeInTheDocument();
+    const signInBtn = screen.getByRole('button', { name: /Sign In as Administrator/i });
+    fireEvent.click(signInBtn);
+    expect(handleOpenLogin).toHaveBeenCalledTimes(1);
+  });
+
+  // 17. Successful super_admin login syncs authoritative role and renders layout
+  it('17. AdminGuard syncs authoritative role via getMe when currentUser is unverified', async () => {
+    const setUserRoleMock = vi.fn();
+    vi.spyOn(api.auth, 'getMe').mockResolvedValueOnce({
+      id: 'sa-real-id',
+      email: 'sivakumarelango10@gmail.com',
+      is_active: true,
+      role: 'super_admin',
+    });
+
+    renderWithAuth(
+      <AdminGuard>
+        <div>Authorized Super Admin Console</div>
+      </AdminGuard>,
+      {
+        isAuthenticated: true,
+        accessToken: 'valid-super-admin-jwt',
+        currentUser: { id: '', email: 'sivakumarelango10@gmail.com', role: 'customer', is_active: true },
+        setUserRole: setUserRoleMock,
+      }
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Authorized Super Admin Console')).toBeInTheDocument();
+    });
+    expect(setUserRoleMock).toHaveBeenCalledWith('super_admin');
+  });
+
+  // 18. Backend authorization remains authoritative even if client state is tampered
+  it('18. Backend authorization remains authoritative: tampered client role is rejected if backend returns 403', async () => {
+    vi.spyOn(api.admin, 'getOverview').mockRejectedValueOnce(
+      new ApiError('Forbidden: Administrative privileges required.', 403)
+    );
+
+    renderWithAuth(
+      <AdminGuard>
+        <div>Should Never Render</div>
+      </AdminGuard>,
+      {
+        isAuthenticated: true,
+        accessToken: 'tampered-customer-token',
+        currentUser: { id: 'c1', email: 'spoofed@store.com', role: 'super_admin', is_active: true },
+      }
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText('Should Never Render')).not.toBeInTheDocument();
+      expect(screen.getByText(/Access Denied/i)).toBeInTheDocument();
+      expect(screen.getByText(/403/i)).toBeInTheDocument();
+    });
   });
 });

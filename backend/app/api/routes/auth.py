@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
+from backend.app.api.auth_dependencies import get_current_user
 from backend.app.api.dependencies import get_settings
 from backend.app.core.config import Settings
+from backend.app.db.models import User
 from backend.app.db.session import get_db_session
 from backend.app.schemas.auth import (
     LoginRequest,
@@ -75,3 +77,11 @@ def login(
         access_token=token.access_token,
         expires_in=token.expires_in,
     )
+
+
+@router.get("/me", response_model=UserResponse)
+def get_current_user_profile(
+    user: User = Depends(get_current_user),
+) -> UserResponse:
+    """Return currently authenticated user profile including verified role."""
+    return UserResponse.model_validate(user)
