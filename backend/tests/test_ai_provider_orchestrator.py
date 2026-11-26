@@ -13,6 +13,7 @@ from google.genai import errors, types
 from pydantic import SecretStr
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from backend.app.core.config import Settings
 from backend.app.core.datetime_utils import utc_now
@@ -78,19 +79,28 @@ TEST_SECRET = SecretStr("test-encryption-secret-32-bytes-long-12345")
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def db_session() -> Any:
-    """Fresh in-memory SQLite database session seeded with AI catalogue."""
-    engine = create_engine("sqlite+pysqlite:///:memory:", echo=False)
+def db_session_factory() -> Any:
+    """Fresh in-memory SQLite database session factory with StaticPool seeded with AI catalogue."""
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        echo=False,
+    )
     Base.metadata.create_all(engine)
-    session_factory = sessionmaker(bind=engine)
-    session = session_factory()
-    try:
+    factory = sessionmaker(bind=engine)
+    with factory() as session:
         seed_ai_provider_catalogue(session)
         session.commit()
+    yield factory
+    engine.dispose()
+
+
+@pytest.fixture
+def db_session(db_session_factory: Any) -> Any:
+    """Fresh database session from the shared in-memory test factory."""
+    with db_session_factory() as session:
         yield session
-    finally:
-        session.close()
-        engine.dispose()
 
 
 class FakeClient:
@@ -122,7 +132,7 @@ def make_test_settings() -> Settings:
         gemini_api_key=SecretStr("test-platform-key"),
         gemini_model="gemini-2.5-flash",
         gemini_timeout_seconds=5.0,
-        gemini_user_key_secret=TEST_SECRET,
+        user_key_encryption_secret=TEST_SECRET,
         database_url=SecretStr("sqlite+pysqlite:///:memory:"),
         auth_secret_key=SecretStr("test-auth-secret-key-0123456789abcdef"),
     )
@@ -481,3 +491,254 @@ def test_orchestrator_normalizes_upstream_rate_limit(db_session: Session) -> Non
 
     assert exc_info.value.status_code == 429
     assert exc_info.value.error_category in ("RATE_LIMIT", "QUOTA_EXHAUSTED")
+
+
+# ---------------------------------------------------------------------------
+# 5. Telemetry Integrity & Duplicate Event Prevention Integration Tests
+# ---------------------------------------------------------------------------
+
+def test_orchestrator_personal_key_telemetry_exact_count_in_db(
+    db_session_factory: Any,
+) -> None:
+    """Personal-key execution through orchestrator produces exactly one SUCCESS usage record in DB."""
+    corr_id = f"corr-personal-telemetry-{uuid4()}"
+    usage_mock = SimpleNamespace(
+        prompt_token_count=18,
+        candidates_token_count=36,
+        total_token_count=54,
+    )
+    fake_client = FakeClient("synthetic-personal-key-for-test", outcome="Personal response", usage_metadata=usage_mock)
+    settings = make_test_settings()
+
+    with db_session_factory() as session:
+        user = User(
+            id=uuid4(),
+            email=f"personal_user_{uuid4()}@example.com",
+            password_hash="test-hash",
+            is_active=True,
+            role="customer",
+        )
+        session.add(user)
+        session.commit()
+
+        raw_key = "synthetic-user-key-not-real-1234"
+        encrypted_key = encrypt_user_key(
+            raw_key,
+            settings.user_key_encryption_secret,
+        )
+        user_settings = UserGeminiSettings(
+            user_id=user.id,
+            encrypted_api_key=encrypted_key,
+            key_hint=f"...{raw_key[-4:]}",
+            is_enabled=True,
+            status="ACTIVE",
+            cooldown_until=None,
+        )
+        session.add(user_settings)
+        session.commit()
+        user_id = user.id
+
+    platform_service = GeminiService(settings, client_factory=lambda **kw: fake_client)
+    scoped_service = RequestScopedGeminiService(
+        platform_service=platform_service,
+        settings=settings,
+        user=user,
+        session_factory=db_session_factory,
+        correlation_id=corr_id,
+        client_factory=lambda **kw: fake_client,
+    )
+    adapter = GeminiProviderAdapter(scoped_service, default_model=settings.gemini_model)
+    resolver = ProviderRuntimeResolver()
+    resolver.register_adapter(adapter)
+
+    with db_session_factory() as session:
+        orchestrator = AIProviderOrchestrator(
+            resolver=resolver,
+            session=session,
+            default_provider="google_gemini",
+            default_model=settings.gemini_model,
+            user=user,
+            correlation_id=corr_id,
+            settings=settings,
+        )
+
+        resp = orchestrator.generate(GenerationRequest(prompt="Personal query secret text 9999"))
+        assert resp.text == "Personal response"
+
+    # Query DB directly to assert exact usage-event count
+    with db_session_factory() as verify_session:
+        events = verify_session.scalars(
+            select(GeminiUsageEvent).where(GeminiUsageEvent.correlation_id == corr_id)
+        ).all()
+
+        assert len(events) == 1, f"Expected exactly 1 telemetry event, found {len(events)}"
+        event = events[0]
+        assert event.status == "SUCCESS"
+        assert event.key_source == "PERSONAL"
+        assert event.user_id == user_id
+        assert event.input_tokens == 18
+        assert event.output_tokens == 36
+        assert event.total_tokens == 54
+        assert event.latency_ms is not None and event.latency_ms > 0
+
+        # Assert zero prompt or confidential payload stored
+        for col in event.__table__.columns:
+            val = getattr(event, col.name)
+            if isinstance(val, str):
+                assert "Personal query" not in val
+                assert "9999" not in val
+                assert "synthetic-user-key" not in val
+
+
+def test_orchestrator_platform_key_telemetry_exact_count_in_db(
+    db_session_factory: Any,
+) -> None:
+    """Platform-key execution through orchestrator produces exactly one SUCCESS usage record in DB."""
+    corr_id = f"corr-platform-telemetry-{uuid4()}"
+    usage_mock = SimpleNamespace(
+        prompt_token_count=10,
+        candidates_token_count=20,
+        total_token_count=30,
+    )
+    fake_client = FakeClient("synthetic-platform-key-for-test", outcome="Platform response", usage_metadata=usage_mock)
+    settings = make_test_settings()
+
+    platform_service = GeminiService(settings, client_factory=lambda **kw: fake_client)
+    scoped_service = RequestScopedGeminiService(
+        platform_service=platform_service,
+        settings=settings,
+        user=None,  # Guest user with no personal key
+        session_factory=db_session_factory,
+        correlation_id=corr_id,
+        client_factory=lambda **kw: fake_client,
+    )
+    adapter = GeminiProviderAdapter(scoped_service, default_model=settings.gemini_model)
+    resolver = ProviderRuntimeResolver()
+    resolver.register_adapter(adapter)
+
+    with db_session_factory() as session:
+        orchestrator = AIProviderOrchestrator(
+            resolver=resolver,
+            session=session,
+            default_provider="google_gemini",
+            default_model=settings.gemini_model,
+            user=None,
+            correlation_id=corr_id,
+            settings=settings,
+        )
+
+        resp = orchestrator.generate(GenerationRequest(prompt="Platform query secret text 8888"))
+        assert resp.text == "Platform response"
+
+    # Query DB directly to assert exact usage-event count
+    with db_session_factory() as verify_session:
+        events = verify_session.scalars(
+            select(GeminiUsageEvent).where(GeminiUsageEvent.correlation_id == corr_id)
+        ).all()
+
+        assert len(events) == 1, f"Expected exactly 1 telemetry event, found {len(events)}"
+        event = events[0]
+        assert event.status == "SUCCESS"
+        assert event.key_source == "COMPANY"
+        assert event.user_id is None
+        assert event.input_tokens == 10
+        assert event.output_tokens == 20
+        assert event.total_tokens == 30
+        assert event.latency_ms is not None and event.latency_ms > 0
+
+        # Assert zero prompt or confidential payload stored
+        for col in event.__table__.columns:
+            val = getattr(event, col.name)
+            if isinstance(val, str):
+                assert "Platform query" not in val
+                assert "8888" not in val
+
+
+def test_orchestrator_prevents_duplicate_telemetry_when_underlying_runtime_records(
+    db_session_factory: Any,
+) -> None:
+    """Orchestrator explicitly avoids creating duplicate records when underlying runtime handles persistence."""
+    corr_id = f"corr-dedup-telemetry-{uuid4()}"
+    fake_client = FakeClient("synthetic-key", outcome="Deduplicated answer")
+    settings = make_test_settings()
+
+    platform_service = GeminiService(settings, client_factory=lambda **kw: fake_client)
+    scoped_service = RequestScopedGeminiService(
+        platform_service=platform_service,
+        settings=settings,
+        user=None,
+        session_factory=db_session_factory,
+        correlation_id=corr_id,
+        client_factory=lambda **kw: fake_client,
+    )
+    adapter = GeminiProviderAdapter(scoped_service, default_model=settings.gemini_model)
+    resolver = ProviderRuntimeResolver()
+    resolver.register_adapter(adapter)
+
+    with db_session_factory() as session:
+        orchestrator = AIProviderOrchestrator(
+            resolver=resolver,
+            session=session,
+            default_provider="google_gemini",
+            default_model=settings.gemini_model,
+            correlation_id=corr_id,
+            settings=settings,
+        )
+
+        # Call generate()
+        orchestrator.generate(GenerationRequest(prompt="Deduplication verification"))
+
+    # Verify directly against database
+    with db_session_factory() as verify_session:
+        events = verify_session.scalars(
+            select(GeminiUsageEvent).where(GeminiUsageEvent.correlation_id == corr_id)
+        ).all()
+
+        # MUST be exactly 1, proving no duplicate was inserted by orchestrator
+        assert len(events) == 1
+
+
+def test_orchestrator_failed_request_records_failure_telemetry_not_success(
+    db_session_factory: Any,
+) -> None:
+    """Failed upstream request records FAILED or COOLDOWN telemetry and NEVER accidentally records SUCCESS."""
+    corr_id = f"corr-failure-telemetry-{uuid4()}"
+    fake_client = FakeClient("synthetic-key", outcome=errors.APIError(429, "Resource exhausted"))
+    settings = make_test_settings()
+
+    platform_service = GeminiService(settings, client_factory=lambda **kw: fake_client)
+    scoped_service = RequestScopedGeminiService(
+        platform_service=platform_service,
+        settings=settings,
+        user=None,
+        session_factory=db_session_factory,
+        correlation_id=corr_id,
+        client_factory=lambda **kw: fake_client,
+    )
+    adapter = GeminiProviderAdapter(scoped_service, default_model=settings.gemini_model)
+    resolver = ProviderRuntimeResolver()
+    resolver.register_adapter(adapter)
+
+    with db_session_factory() as session:
+        orchestrator = AIProviderOrchestrator(
+            resolver=resolver,
+            session=session,
+            default_provider="google_gemini",
+            default_model=settings.gemini_model,
+            correlation_id=corr_id,
+            settings=settings,
+        )
+
+        with pytest.raises(AIProviderError):
+            orchestrator.generate(GenerationRequest(prompt="Trigger failure"))
+
+    with db_session_factory() as verify_session:
+        events = verify_session.scalars(
+            select(GeminiUsageEvent).where(GeminiUsageEvent.correlation_id == corr_id)
+        ).all()
+
+        assert len(events) >= 1
+        for ev in events:
+            assert ev.status != "SUCCESS", "Failed request must never record SUCCESS status"
+            assert ev.status in ("FAILED", "COOLDOWN")
+            assert ev.error_category in ("QUOTA_EXHAUSTED", "PROVIDER_ERROR", "RATE_LIMIT")

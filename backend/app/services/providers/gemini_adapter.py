@@ -28,12 +28,16 @@ from backend.app.services.providers.base import (
     AIProviderQuotaExhaustedError,
     AIProviderRateLimitError,
     AIProviderResponseError,
+    AIProviderSchemaError,
     AIProviderTimeoutError,
     AIProviderTransientError,
+    AIProviderValidationError,
     GenerationRequest,
     GenerationResponse,
     ProviderCapabilities,
     TokenUsage,
+    parse_and_validate_structured_output,
+    validate_structured_schema,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,6 +99,8 @@ class GeminiProviderAdapter(AIProviderAdapter):
         model: str | None = None,
     ) -> AIProviderError:
         """Map Gemini-specific exceptions into normalized AIProviderError hierarchy."""
+        if isinstance(exc, AIProviderError):
+            return exc
         model_name = model or self._default_model
 
         if isinstance(exc, GeminiTimeoutError):
@@ -247,6 +253,8 @@ class GeminiProviderAdapter(AIProviderAdapter):
                 tools=request.tools,
                 system_instruction=request.system_instruction,
                 user_key=user_key,
+                response_schema=request.response_schema,
+                response_mime_type="application/json" if request.response_schema is not None else None,
             )
         except Exception as exc:
             raise self._normalize_exception(exc, model=model_name) from exc
@@ -270,6 +278,17 @@ class GeminiProviderAdapter(AIProviderAdapter):
                     total_tokens=total_tokens,
                 )
 
+        # 3. Parse and validate structured output if schema requested
+        parsed_output: Any = None
+        if request.response_schema is not None:
+            parsed_output = parse_and_validate_structured_output(
+                result.text,
+                request.response_schema,
+                strict=request.strict_schema,
+                provider_code=self.provider_code,
+                model=model_name,
+            )
+
         resp_metadata = dict(request.metadata)
         if isinstance(self._service, RequestScopedGeminiService) and (
             getattr(self._service, "_session_factory", None) is not None
@@ -279,6 +298,7 @@ class GeminiProviderAdapter(AIProviderAdapter):
 
         return GenerationResponse(
             text=result.text,
+            parsed=parsed_output,
             function_calls=result.function_calls,
             raw_content=result.candidate_content,
             usage=usage,

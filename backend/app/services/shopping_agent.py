@@ -3,7 +3,7 @@ import logging
 import re
 from collections.abc import Sequence
 from decimal import Decimal, InvalidOperation
-from typing import Protocol
+from typing import Any, Protocol
 
 from sqlalchemy.orm import Session
 
@@ -320,9 +320,19 @@ class ShoppingAgent:
     def __init__(
         self,
         gemini_service: TextGenerator | None = None,
+        *,
+        ai_service: Any = None,
         catalogue_currency: str = DEFAULT_CATALOGUE_CURRENCY,
     ) -> None:
-        self._gemini = gemini_service
+        if ai_service is not None:
+            self._ai_service = ai_service
+            self._gemini = gemini_service
+        elif gemini_service is not None and type(gemini_service).__name__ == "AIProviderOrchestrator":
+            self._ai_service = gemini_service
+            self._gemini = None
+        else:
+            self._ai_service = None
+            self._gemini = gemini_service
         self._catalogue_currency = catalogue_currency.strip().upper()
         self._supported_currencies = get_supported_currency_aliases(self._catalogue_currency)
         self._currency_symbol = get_currency_symbol(self._catalogue_currency)
@@ -335,6 +345,39 @@ class ShoppingAgent:
                 is_ambiguous_or_insufficient=True,
                 clarification_message="Please tell me what you would like to search for.",
             )
+
+        if self._ai_service is not None and hasattr(self._ai_service, "generate_structured"):
+            prompt = f"{_INTENT_EXTRACTION_PROMPT}\nUser request: {query}"
+            try:
+                intent = self._ai_service.generate_structured(
+                    prompt,
+                    ShoppingIntent,
+                    strict_schema=False,
+                )
+                intent.keywords = normalize_search_keywords(intent.keywords)
+                logger.info(
+                    "Shopping intent successfully extracted via AI orchestrator",
+                    extra={
+                        "event": "intent_extracted",
+                        "terms_count": len(intent.keywords),
+                        "has_category": bool(intent.category),
+                        "has_min_budget": intent.min_budget is not None,
+                        "has_max_budget": intent.max_budget is not None,
+                    },
+                )
+                return intent
+            except (GeminiTimeoutError, GeminiServiceError) as exc:
+                logger.warning(
+                    "AI service unavailable during intent extraction, falling back to deterministic extraction",
+                    extra={"event": "intent_extraction_gemini_error", "error_type": type(exc).__name__},
+                )
+                return _fallback_extract_intent(query)
+            except Exception as exc:
+                logger.warning(
+                    "AI orchestrator intent extraction failed, falling back to deterministic extraction",
+                    extra={"event": "intent_extraction_fallback", "error_type": type(exc).__name__},
+                )
+                return _fallback_extract_intent(query)
 
         if self._gemini is None:
             return _fallback_extract_intent(query)

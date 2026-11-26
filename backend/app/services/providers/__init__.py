@@ -17,12 +17,16 @@ from backend.app.services.providers.base import (
     AIProviderQuotaExhaustedError,
     AIProviderRateLimitError,
     AIProviderResponseError,
+    AIProviderSchemaError,
     AIProviderTimeoutError,
     AIProviderTransientError,
+    AIProviderValidationError,
     GenerationRequest,
     GenerationResponse,
     ProviderCapabilities,
     TokenUsage,
+    parse_and_validate_structured_output,
+    validate_structured_schema,
 )
 from backend.app.services.providers.gemini_adapter import GeminiProviderAdapter
 from backend.app.services.providers.groq_adapter import (
@@ -87,6 +91,10 @@ __all__ = [
     "AIProviderBadRequestError",
     "AIProviderSSRFError",
     "AIProviderResponseError",
+    "AIProviderValidationError",
+    "AIProviderSchemaError",
+    "validate_structured_schema",
+    "parse_and_validate_structured_output",
     # Gemini implementation
     "GeminiProviderAdapter",
     # Orchestrator

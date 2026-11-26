@@ -52,9 +52,10 @@ def create_or_promote_admin(
     password: str,
     role: str = "super_admin",
     confirm_promote: bool = False,
+    reset_password: bool = False,
     display_name: str = "Administrator",
 ) -> tuple[User, bool]:
-    """Create a new administrator or promote an existing account.
+    """Create a new administrator, promote an existing account, or reset password.
 
     Returns (user, is_new_account).
     Raises AdminCreationError on invalid inputs or rejected promotion.
@@ -68,6 +69,21 @@ def create_or_promote_admin(
     user = session.scalar(select(User).where(User.email == clean_email))
 
     if user is not None:
+        if reset_password:
+            user.password_hash = hash_password(password)
+            user.is_active = True
+            record_admin_audit_event(
+                session,
+                actor_user_id=user.id,
+                action="ADMIN_PASSWORD_RESET",
+                target_type="user",
+                target_id=str(user.id),
+                metadata={"role": user.role, "email": clean_email},
+            )
+            session.commit()
+            session.refresh(user)
+            return user, False
+
         if user.role == role:
             # Already has the target role
             return user, False
@@ -144,6 +160,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Confirm promotion if the account already exists.",
     )
     parser.add_argument(
+        "--reset-password",
+        action="store_true",
+        default=False,
+        help="Reset password if the administrator account already exists.",
+    )
+    parser.add_argument(
         "--display-name",
         default="Administrator",
         help="Display name for the administrator profile.",
@@ -215,11 +237,14 @@ def main(argv: list[str] | None = None) -> int:
                 password=password,
                 role=args.role,
                 confirm_promote=confirm,
+                reset_password=args.reset_password,
                 display_name=args.display_name,
             )
 
             if is_new:
                 print(f"Success: New {user.role} account created successfully for '{clean_email}'.")
+            elif args.reset_password:
+                print(f"Success: Password for '{clean_email}' ({user.role}) has been reset successfully.")
             else:
                 print(f"Success: Account '{clean_email}' is configured as {user.role}.")
             return 0

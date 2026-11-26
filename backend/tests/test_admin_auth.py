@@ -338,6 +338,18 @@ def test_customer_promotion_requires_explicit_confirmation(api_client):
         assert promoted.role == "super_admin"
         assert verify_password("NewAdminPassword123!", promoted.password_hash)
 
+        # Reset password for existing admin
+        updated, is_new2 = create_or_promote_admin(
+            session,
+            email="existing-cust@example.com",
+            password="UpdatedSecureAdminPassword456!",
+            role="super_admin",
+            reset_password=True,
+        )
+        assert is_new2 is False
+        assert verify_password("UpdatedSecureAdminPassword456!", updated.password_hash)
+        assert not verify_password("NewAdminPassword123!", updated.password_hash)
+
 
 # ---------------------------------------------------------------------------
 # 13. No default password or secret is generated
