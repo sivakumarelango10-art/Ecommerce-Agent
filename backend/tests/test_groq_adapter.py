@@ -168,7 +168,7 @@ def test_groq_adapter_implements_ai_provider_adapter() -> None:
     capabilities = adapter.get_capabilities()
     assert isinstance(capabilities, ProviderCapabilities)
     assert capabilities.supports_text is True
-    assert capabilities.supports_structured_output is True
+    assert capabilities.supports_structured_output is False
     assert capabilities.supports_function_calling is True
     assert capabilities.supports_streaming is False
     assert capabilities.supports_vision is False

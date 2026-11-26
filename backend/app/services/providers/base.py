@@ -3,7 +3,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any
+import json
+import re
+from typing import Any, TypeVar, get_args, get_origin
+
+from pydantic import BaseModel, ValidationError
 
 
 @dataclass(frozen=True)
@@ -52,6 +56,8 @@ class GenerationRequest:
     timeout_seconds: float = 30.0
     correlation_id: str | None = None
     user_key: str | None = None
+    response_schema: type[BaseModel] | None = None
+    strict_schema: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -60,6 +66,7 @@ class GenerationResponse:
     """Provider-independent generation response structure."""
 
     text: str | None = None
+    parsed: Any = None
     function_calls: tuple[Any, ...] = ()
     raw_content: Any = None
     usage: TokenUsage | None = None
@@ -257,6 +264,165 @@ class AIProviderResponseError(AIProviderError):
             retry_after_seconds=None,
             error_category="EMPTY_RESPONSE",
         )
+
+
+class AIProviderValidationError(AIProviderResponseError):
+    """Raised when model output fails validation against the requested schema."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        provider_code: str,
+        model: str | None = None,
+        raw_text: str | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            provider_code=provider_code,
+            model=model,
+        )
+        self.error_category = "VALIDATION_ERROR"
+        self.raw_text = raw_text
+
+
+class AIProviderSchemaError(AIProviderBadRequestError):
+    """Raised when a requested response schema is invalid, too large, or deeply nested."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        provider_code: str = "orchestrator",
+        model: str | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            provider_code=provider_code,
+            model=model,
+            status_code=400,
+        )
+        self.error_category = "INVALID_SCHEMA"
+
+
+T = TypeVar("T", bound=BaseModel)
+
+MAX_SCHEMA_FIELDS = 50
+MAX_SCHEMA_DEPTH = 5
+
+
+def _extract_nested_models(annotation: Any) -> list[type[BaseModel]]:
+    """Extract nested BaseModel classes from typing annotations."""
+    models: list[type[BaseModel]] = []
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        models.append(annotation)
+        return models
+
+    origin = get_origin(annotation)
+    if origin is not None:
+        for arg in get_args(annotation):
+            models.extend(_extract_nested_models(arg))
+    return models
+
+
+def validate_structured_schema(
+    schema: Any,
+    *,
+    max_fields: int = MAX_SCHEMA_FIELDS,
+    max_depth: int = MAX_SCHEMA_DEPTH,
+) -> type[BaseModel]:
+    """Validate that the provided schema is a trusted, bound Pydantic model.
+
+    Enforces:
+    1. Schema must be a subclass of pydantic.BaseModel.
+    2. Prevents excessively large schemas (> max_fields total fields).
+    3. Prevents deeply nested schemas (> max_depth levels).
+    """
+    if not (isinstance(schema, type) and issubclass(schema, BaseModel)):
+        raise AIProviderSchemaError(
+            f"Invalid schema: expected a subclass of pydantic.BaseModel, got {type(schema).__name__}"
+        )
+
+    def _inspect_depth_and_fields(model_cls: type[BaseModel], current_depth: int) -> int:
+        if current_depth > max_depth:
+            raise AIProviderSchemaError(
+                f"Schema '{model_cls.__name__}' exceeds maximum allowed nesting depth of {max_depth}."
+            )
+        field_count = len(model_cls.model_fields)
+        for field_name, field_info in model_cls.model_fields.items():
+            nested_classes = _extract_nested_models(field_info.annotation)
+            for nested in nested_classes:
+                field_count += _inspect_depth_and_fields(nested, current_depth + 1)
+        return field_count
+
+    total_fields = _inspect_depth_and_fields(schema, 1)
+    if total_fields > max_fields:
+        raise AIProviderSchemaError(
+            f"Schema '{schema.__name__}' exceeds maximum allowed field count of {max_fields} (found {total_fields})."
+        )
+
+    return schema
+
+
+def parse_and_validate_structured_output(
+    raw_text: str | None,
+    schema: type[T],
+    *,
+    strict: bool = True,
+    provider_code: str = "ai_provider",
+    model: str | None = None,
+) -> T:
+    """Parse and validate JSON response text against a trusted Pydantic schema."""
+    if not raw_text or not raw_text.strip():
+        raise AIProviderResponseError(
+            f"Provider '{provider_code}' returned an empty response for structured generation.",
+            provider_code=provider_code,
+            model=model,
+        )
+
+    clean_text = raw_text.strip()
+    if clean_text.startswith("```"):
+        clean_text = re.sub(r"^```(?:json)?\s*", "", clean_text)
+        clean_text = re.sub(r"\s*```$", "", clean_text)
+        clean_text = clean_text.strip()
+
+    try:
+        data = json.loads(clean_text)
+    except json.JSONDecodeError as exc:
+        raise AIProviderValidationError(
+            f"Provider '{provider_code}' returned malformed JSON: {str(exc)}",
+            provider_code=provider_code,
+            model=model,
+            raw_text=raw_text,
+        ) from exc
+
+    if not isinstance(data, dict):
+        raise AIProviderValidationError(
+            f"Expected JSON object (dict), but got {type(data).__name__}.",
+            provider_code=provider_code,
+            model=model,
+            raw_text=raw_text,
+        )
+
+    if strict:
+        extra_keys = set(data.keys()) - set(schema.model_fields.keys())
+        if extra_keys:
+            raise AIProviderValidationError(
+                f"Unexpected fields in structured output under strict validation: {sorted(extra_keys)}",
+                provider_code=provider_code,
+                model=model,
+                raw_text=raw_text,
+            )
+
+    try:
+        return schema.model_validate(data)
+    except ValidationError as exc:
+        raise AIProviderValidationError(
+            f"Structured output schema validation failed: {str(exc)}",
+            provider_code=provider_code,
+            model=model,
+            raw_text=raw_text,
+        ) from exc
 
 
 class AIProviderAdapter(ABC):

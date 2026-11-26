@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from backend.app.api.auth_dependencies import get_optional_current_user
 from backend.app.api.dependencies import (
     QuestionAnswerer,
+    get_ai_orchestrator,
     get_gemini_service,
     get_settings,
 )
@@ -22,6 +23,11 @@ from backend.app.services.gemini_service import (
     GeminiServiceError,
     GeminiTimeoutError,
 )
+from backend.app.services.providers.base import (
+    AIProviderError,
+    AIProviderTimeoutError,
+)
+from backend.app.services.providers.orchestrator import AIProviderOrchestrator
 from backend.app.services.shopping_agent import ShoppingAgent
 from backend.app.services.supervisor_agent import SupervisorAgent
 
@@ -39,29 +45,29 @@ router = APIRouter(prefix="/shopping", tags=["shopping"])
 def search_products(
     request: ShoppingSearchRequest,
     session: Session = Depends(get_db_session),
-    gemini_service: QuestionAnswerer = Depends(get_gemini_service),
+    ai_orchestrator: AIProviderOrchestrator = Depends(get_ai_orchestrator),
     settings: Settings = Depends(get_settings),
     current_user: User | None = Depends(get_optional_current_user),
 ) -> ShoppingSearchResponse:
-    """Discover real catalogue products using Gemini intent extraction and PostgreSQL.
+    """Discover real catalogue products using AI orchestrator intent extraction and PostgreSQL.
 
     Supports both guests and authenticated users.
     """
     shopping_agent = ShoppingAgent(
-        gemini_service, catalogue_currency=settings.catalogue_currency
+        ai_service=ai_orchestrator, catalogue_currency=settings.catalogue_currency
     )
     try:
         response = shopping_agent.search(request, session)
         return response
-    except GeminiTimeoutError as exc:
+    except (AIProviderTimeoutError, GeminiTimeoutError) as exc:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="The Gemini request timed out.",
+            detail="The AI provider request timed out.",
         ) from exc
-    except GeminiServiceError as exc:
+    except (AIProviderError, GeminiServiceError) as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="The Gemini service could not complete the request.",
+            detail="The AI provider service could not complete the request.",
         ) from exc
     except HTTPException:
         raise

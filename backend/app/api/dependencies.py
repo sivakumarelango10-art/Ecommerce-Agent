@@ -29,6 +29,8 @@ class QuestionAnswerer(Protocol):
         tools: Sequence[types.Tool] | None = None,
         system_instruction: str | None = None,
         user_key: Any = None,
+        response_schema: Any = None,
+        response_mime_type: str | None = None,
     ) -> GeminiResult: ...
 
 

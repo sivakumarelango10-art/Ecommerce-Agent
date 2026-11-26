@@ -479,6 +479,8 @@ class GeminiService:
         tools: Sequence[types.Tool] | None = None,
         system_instruction: str | None = None,
         user_key: SecretStr | None = None,
+        response_schema: Any = None,
+        response_mime_type: str | None = None,
     ) -> GeminiResult:
         if contents is None:
             if question is not None:
@@ -508,13 +510,21 @@ class GeminiService:
             else _SYSTEM_INSTRUCTION
         )
 
-        config = types.GenerateContentConfig(
-            system_instruction=effective_instruction,
-            tools=list(tools) if tools else None,
-            automatic_function_calling=types.AutomaticFunctionCallingConfig(
+        config_kwargs: dict[str, Any] = {
+            "system_instruction": effective_instruction,
+            "tools": list(tools) if tools else None,
+            "automatic_function_calling": types.AutomaticFunctionCallingConfig(
                 disable=True
             ),
-        )
+        }
+        if response_mime_type:
+            config_kwargs["response_mime_type"] = response_mime_type
+        if response_schema is not None:
+            config_kwargs["response_schema"] = response_schema
+            if not response_mime_type:
+                config_kwargs["response_mime_type"] = "application/json"
+
+        config = types.GenerateContentConfig(**config_kwargs)
 
         attempted_indices: set[int] = set()
         attempted_quota_groups: set[str] = set()

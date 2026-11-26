@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Sequence
+from typing import Any, Sequence, TypeVar
 from uuid import UUID, uuid4
 
 from google.genai import types
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -18,11 +19,15 @@ from backend.app.services.providers.base import (
     AIProviderBadRequestError,
     AIProviderError,
     AIProviderResponseError,
+    AIProviderSchemaError,
     AIProviderTimeoutError,
+    AIProviderValidationError,
     GenerationRequest,
     GenerationResponse,
     ProviderCapabilities,
     TokenUsage,
+    parse_and_validate_structured_output,
+    validate_structured_schema,
 )
 from backend.app.services.providers.resolver import (
     DisabledModelError,
@@ -53,6 +58,9 @@ def _ensure_catalogue_seeded(session: Session) -> None:
             session.rollback()
         except Exception:
             pass
+
+
+T = TypeVar("T", bound=BaseModel)
 
 
 class AIProviderOrchestrator:
@@ -117,7 +125,19 @@ class AIProviderOrchestrator:
         else:
             resolved_model_name = getattr(adapter, "_default_model", "default")
 
-        # 3. Attach correlation ID and model if not present
+        # 3. Validate structured schema and verify provider capability if structured output requested
+        if request.response_schema is not None:
+            validate_structured_schema(request.response_schema)
+            capabilities = adapter.get_capabilities()
+            if not capabilities.supports_structured_output:
+                raise AIProviderBadRequestError(
+                    f"Provider '{target_provider}' does not support structured output generation.",
+                    provider_code=target_provider,
+                    model=resolved_model_name,
+                    status_code=400,
+                )
+
+        # 4. Attach correlation ID and model if not present
         effective_correlation_id = (
             request.correlation_id
             or self.correlation_id
@@ -206,7 +226,61 @@ class AIProviderOrchestrator:
                 latency_ms=latency_ms,
             )
 
+        # 7. Ensure parsed model is populated if response_schema was requested
+        if request.response_schema is not None and response.parsed is None:
+            response.parsed = parse_and_validate_structured_output(
+                response.text,
+                request.response_schema,
+                strict=request.strict_schema,
+                provider_code=target_provider,
+                model=resolved_model_name,
+            )
+
         return response
+
+    def generate_structured(
+        self,
+        prompt: str,
+        response_schema: type[T],
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        system_instruction: str | None = None,
+        strict_schema: bool = True,
+        timeout_seconds: float = 30.0,
+        **kwargs: Any,
+    ) -> T:
+        """Execute structured output generation returning validated Pydantic model instance."""
+        validated_cls = validate_structured_schema(response_schema)
+        clean_prompt = (prompt or "").strip()
+        if not clean_prompt:
+            raise AIProviderBadRequestError(
+                "Prompt must not be empty.",
+                provider_code=provider or self.default_provider,
+                model=model or self.default_model,
+                status_code=400,
+            )
+
+        req = GenerationRequest(
+            prompt=clean_prompt,
+            model=model,
+            system_instruction=system_instruction,
+            response_schema=validated_cls,
+            strict_schema=strict_schema,
+            timeout_seconds=timeout_seconds,
+            correlation_id=self.correlation_id,
+            metadata=dict(kwargs),
+        )
+        res = self.generate(req, provider=provider)
+        if res.parsed is not None and isinstance(res.parsed, validated_cls):
+            return res.parsed
+        return parse_and_validate_structured_output(
+            res.text,
+            validated_cls,
+            strict=strict_schema,
+            provider_code=res.provider or provider or self.default_provider,
+            model=res.model or model,
+        )
 
     def generate_text(
         self,

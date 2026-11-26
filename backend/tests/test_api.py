@@ -71,6 +71,52 @@ def test_gemini_timeout_returns_gateway_timeout(api_client):
     assert response.json()["detail"] == "The Gemini request timed out."
 
 
+def test_ask_endpoint_rejects_client_provider_selection_fields(api_client):
+    """Client request fields cannot override the provider; extra fields are rejected with 422."""
+    client, fake_client = api_client
+
+    # 1. Attempting to override provider to groq
+    res_groq = client.post(
+        "/api/v1/ask",
+        json={"question": "What is StoreFlow?", "provider": "groq"},
+    )
+    assert res_groq.status_code == 422
+    assert "extra_forbidden" in str(res_groq.json())
+
+    # 2. Attempting to pass provider='google_gemini' explicitly
+    res_gemini = client.post(
+        "/api/v1/ask",
+        json={"question": "What is StoreFlow?", "provider": "google_gemini"},
+    )
+    assert res_gemini.status_code == 422
+
+    # 3. Attempting to override model identifier
+    res_model = client.post(
+        "/api/v1/ask",
+        json={"question": "What is StoreFlow?", "model": "llama-3.3-70b-versatile"},
+    )
+    assert res_model.status_code == 422
+
+    # 4. Attempting to pass arbitrary provider_id
+    res_id = client.post(
+        "/api/v1/ask",
+        json={"question": "What is StoreFlow?", "provider_id": "prov-id-999"},
+    )
+    assert res_id.status_code == 422
+
+    # Ensure none of the rejected attempts invoked the AI provider
+    assert fake_client.models.calls == []
+
+    # 5. Normal question succeeds through trusted server-side Gemini configuration
+    res_valid = client.post(
+        "/api/v1/ask",
+        json={"question": "What is StoreFlow?"},
+    )
+    assert res_valid.status_code == 200
+    assert res_valid.json() == {"answer": "A mocked Gemini answer."}
+    assert len(fake_client.models.calls) == 1
+
+
 def test_configuration_error_prevents_startup(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     app = create_app(settings_loader=lambda: load_settings(env_file=None))

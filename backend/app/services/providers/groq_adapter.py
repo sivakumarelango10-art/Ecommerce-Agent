@@ -546,7 +546,7 @@ class GroqProviderAdapter(AIProviderAdapter):
     def get_capabilities(self) -> ProviderCapabilities:
         return ProviderCapabilities(
             supports_text=True,
-            supports_structured_output=True,
+            supports_structured_output=False,
             supports_function_calling=True,
             supports_streaming=False,
             supports_vision=False,
@@ -816,6 +816,13 @@ class GroqProviderAdapter(AIProviderAdapter):
     def generate(self, request: GenerationRequest) -> GenerationResponse:
         """Synchronously execute chat completion against Groq API with hardened transport."""
         model_name = request.model or self._default_model
+        if request.response_schema is not None:
+            raise AIProviderBadRequestError(
+                "Structured output is not supported by Groq provider adapter.",
+                provider_code=self.provider_code,
+                model=model_name,
+                status_code=400,
+            )
         # Exact model allowlist validation
         validated_model = self._validate_model_request(model_name, request=request)
 

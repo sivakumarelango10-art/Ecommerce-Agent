@@ -187,6 +187,8 @@ class RequestScopedGeminiService:
         tools: Sequence[types.Tool] | None = None,
         system_instruction: str | None = None,
         user_key: SecretStr | None = None,
+        response_schema: Any = None,
+        response_mime_type: str | None = None,
     ) -> GeminiResult:
         """Execute request using personal key first if eligible, falling back to company pool."""
         # 1. Validate inputs before attempting any key
@@ -245,13 +247,20 @@ class RequestScopedGeminiService:
                 timeout=self._settings.gemini_timeout_seconds * 1000
             )
             client = factory(api_key=personal_key_str, http_options=http_options)
-            config = types.GenerateContentConfig(
-                system_instruction=effective_instruction,
-                tools=list(tools) if tools else None,
-                automatic_function_calling=types.AutomaticFunctionCallingConfig(
+            config_kwargs: dict[str, Any] = {
+                "system_instruction": effective_instruction,
+                "tools": list(tools) if tools else None,
+                "automatic_function_calling": types.AutomaticFunctionCallingConfig(
                     disable=True
                 ),
-            )
+            }
+            if response_mime_type:
+                config_kwargs["response_mime_type"] = response_mime_type
+            if response_schema is not None:
+                config_kwargs["response_schema"] = response_schema
+                if not response_mime_type:
+                    config_kwargs["response_mime_type"] = "application/json"
+            config = types.GenerateContentConfig(**config_kwargs)
 
             personal_start = time.time()
             personal_success = False
@@ -464,6 +473,8 @@ class RequestScopedGeminiService:
                 question=question,
                 tools=tools,
                 system_instruction=effective_instruction,
+                response_schema=response_schema,
+                response_mime_type=response_mime_type,
             )
             company_latency = (time.time() - company_start) * 1000.0
 
