@@ -68,11 +68,10 @@ export const Navbar: React.FC<NavbarProps> = ({
               type="button"
               aria-current={activeView === 'chat' ? 'page' : undefined}
               onClick={() => setActiveView('chat')}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
-                activeView === 'chat'
-                  ? 'bg-slate-900 text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-              }`}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${activeView === 'chat'
+                ? 'bg-slate-900 text-white shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                }`}
             >
               Support Chat
             </button>
@@ -82,11 +81,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                   type="button"
                   aria-current={activeView === 'orders' ? 'page' : undefined}
                   onClick={() => setActiveView('orders')}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
-                    activeView === 'orders'
-                      ? 'bg-slate-900 text-white shadow-2xs'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                  }`}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${activeView === 'orders'
+                    ? 'bg-slate-900 text-white shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                    }`}
                 >
                   My Orders
                 </button>
@@ -95,11 +93,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                     type="button"
                     aria-current={activeView === 'admin' ? 'page' : undefined}
                     onClick={handleAdminClick}
-                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 ${
-                      activeView === 'admin'
-                        ? 'bg-purple-600 text-white shadow-2xs'
-                        : 'text-purple-700 hover:text-purple-900 hover:bg-purple-50'
-                    }`}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 ${activeView === 'admin'
+                      ? 'bg-purple-600 text-white shadow-2xs'
+                      : 'text-purple-700 hover:text-purple-900 hover:bg-purple-50'
+                      }`}
                   >
                     <Shield className="w-3.5 h-3.5" />
                     <span>Admin Dashboard</span>
@@ -189,11 +186,10 @@ export const Navbar: React.FC<NavbarProps> = ({
         <button
           type="button"
           onClick={() => setActiveView('chat')}
-          className={`px-2.5 py-1 text-xs font-semibold rounded-md whitespace-nowrap transition-colors ${
-            activeView === 'chat'
-              ? 'bg-slate-900 text-white'
-              : 'text-slate-600 hover:bg-slate-200/70'
-          }`}
+          className={`px-2.5 py-1 text-xs font-semibold rounded-md whitespace-nowrap transition-colors ${activeView === 'chat'
+            ? 'bg-slate-900 text-white'
+            : 'text-slate-600 hover:bg-slate-200/70'
+            }`}
         >
           Support Chat
         </button>
@@ -201,11 +197,10 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button
             type="button"
             onClick={() => setActiveView('orders')}
-            className={`px-2.5 py-1 text-xs font-semibold rounded-md whitespace-nowrap transition-colors ${
-              activeView === 'orders'
-                ? 'bg-slate-900 text-white'
-                : 'text-slate-600 hover:bg-slate-200/70'
-            }`}
+            className={`px-2.5 py-1 text-xs font-semibold rounded-md whitespace-nowrap transition-colors ${activeView === 'orders'
+              ? 'bg-slate-900 text-white'
+              : 'text-slate-600 hover:bg-slate-200/70'
+              }`}
           >
             My Orders
           </button>
@@ -221,11 +216,10 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button
             type="button"
             onClick={handleAdminClick}
-            className={`px-2.5 py-1 text-xs font-semibold rounded-md whitespace-nowrap flex items-center gap-1 transition-colors ${
-              activeView === 'admin'
-                ? 'bg-purple-600 text-white'
-                : 'text-purple-700 bg-purple-50 border border-purple-200'
-            }`}
+            className={`px-2.5 py-1 text-xs font-semibold rounded-md whitespace-nowrap flex items-center gap-1 transition-colors ${activeView === 'admin'
+              ? 'bg-purple-600 text-white'
+              : 'text-purple-700 bg-purple-50 border border-purple-200'
+              }`}
           >
             <Shield className="w-3 h-3" />
             <span>Admin</span>

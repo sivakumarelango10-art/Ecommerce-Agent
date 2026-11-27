@@ -181,11 +181,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             type="button"
             aria-pressed={tab === 'login'}
             onClick={() => handleTabSwitch('login')}
-            className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-              tab === 'login'
-                ? 'bg-white text-slate-900 shadow-sm'
-                : 'text-slate-500 hover:text-slate-800'
-            }`}
+            className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${tab === 'login'
+              ? 'bg-white text-slate-900 shadow-sm'
+              : 'text-slate-500 hover:text-slate-800'
+              }`}
           >
             Sign In
           </button>
@@ -193,11 +192,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             type="button"
             aria-pressed={tab === 'register'}
             onClick={() => handleTabSwitch('register')}
-            className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-              tab === 'register'
-                ? 'bg-white text-slate-900 shadow-sm'
-                : 'text-slate-500 hover:text-slate-800'
-            }`}
+            className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${tab === 'register'
+              ? 'bg-white text-slate-900 shadow-sm'
+              : 'text-slate-500 hover:text-slate-800'
+              }`}
           >
             Register
           </button>
