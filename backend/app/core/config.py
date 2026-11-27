@@ -589,10 +589,11 @@ def load_settings(*, env_file: str | None = ".env") -> Settings:
             details,
             extra={"event": "configuration_error", "error_type": type(exc).__name__},
         )
+        # Suppress chained Pydantic ValidationError so Python's traceback never dumps input_value={...} secrets.
         raise ConfigurationError(
             f"Application configuration is invalid ({details}). "
             "Check the required Gemini, database, encryption, and authentication settings."
-        ) from exc
+        ) from None
     except SettingsError as exc:
         logger.error(
             "Application settings parsing failed (%s): %s",
@@ -603,4 +604,4 @@ def load_settings(*, env_file: str | None = ".env") -> Settings:
         raise ConfigurationError(
             f"Application configuration is invalid ({exc}). "
             "Check environment variable formatting."
-        ) from exc
+        ) from None

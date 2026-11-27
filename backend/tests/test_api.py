@@ -130,27 +130,34 @@ def test_configuration_error_reports_safe_reason_without_exposing_secrets(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ):
+    import traceback
+
     secret_db_pw = "super_sensitive_db_password_xyz"
     secret_auth = "super_sensitive_auth_secret_0123456789abcdef"
+    secret_gemini = "super_sensitive_gemini_key_123"
     short_user_enc = "secret_short_val"
     monkeypatch.setenv("ENVIRONMENT", "staging")
     monkeypatch.setenv("DATABASE_URL", f"postgresql+psycopg://user:{secret_db_pw}@db.example.com/neondb")
     monkeypatch.setenv("AUTH_SECRET_KEY", secret_auth)
-    monkeypatch.setenv("GEMINI_API_KEY", "super_sensitive_gemini_key_123")
+    monkeypatch.setenv("GEMINI_API_KEY", secret_gemini)
     monkeypatch.setenv("USER_KEY_ENCRYPTION_SECRET", short_user_enc)
 
+    formatted_tb = ""
     with pytest.raises(ConfigurationError) as exc_info:
-        load_settings(env_file=None)
+        try:
+            load_settings(env_file=None)
+        except ConfigurationError:
+            formatted_tb = traceback.format_exc()
+            raise
 
     msg = str(exc_info.value)
+    assert exc_info.value.__cause__ is None
     assert "Application configuration is invalid" in msg
     assert "USER_KEY_ENCRYPTION_SECRET must be at least 32 bytes" in msg
-    assert secret_db_pw not in msg
-    assert secret_auth not in msg
-    assert short_user_enc not in msg
-    assert secret_db_pw not in caplog.text
-    assert secret_auth not in caplog.text
-    assert short_user_enc not in caplog.text
+    for leaked in (secret_db_pw, secret_auth, secret_gemini, short_user_enc, "input_value"):
+        assert leaked not in msg
+        assert leaked not in caplog.text
+        assert leaked not in formatted_tb
 
 
 def test_configuration_error_identifies_missing_staging_encryption_secret(
