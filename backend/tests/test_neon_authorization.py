@@ -342,6 +342,37 @@ def test_admin_emails_config_parsing():
     assert "text/plain" in s4.storage_allowed_content_types
 
 
+def test_env_settings_source_parses_non_json_admin_emails_and_content_types(monkeypatch):
+    """Verify real OS env vars (non-JSON plain/CSV/blank) do not fail EnvSettingsSource JSON decoding."""
+    from backend.app.core.config import load_settings
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///:memory:")
+    monkeypatch.setenv("AUTH_SECRET_KEY", "01234567890123456789012345678901")
+
+    # Single plain email (common Render/dashboard setting)
+    monkeypatch.setenv("ADMIN_EMAILS", "sivakumarelango10@gmail.com")
+    monkeypatch.setenv("STORAGE_ALLOWED_CONTENT_TYPES", "text/plain, application/json")
+    s_single = load_settings(env_file=None)
+    assert s_single.admin_emails == {"sivakumarelango10@gmail.com"}
+    assert s_single.storage_allowed_content_types == {"text/plain", "application/json"}
+
+    # Comma-separated emails with whitespace
+    monkeypatch.setenv("ADMIN_EMAILS", "Admin1@StoreFlow.com, Admin2@StoreFlow.com ")
+    s_csv = load_settings(env_file=None)
+    assert s_csv.admin_emails == {"admin1@storeflow.com", "admin2@storeflow.com"}
+
+    # Blank string
+    monkeypatch.setenv("ADMIN_EMAILS", "   ")
+    s_blank = load_settings(env_file=None)
+    assert s_blank.admin_emails == set()
+
+    # JSON array string still works identically
+    monkeypatch.setenv("ADMIN_EMAILS", '["JsonAdmin@StoreFlow.com"]')
+    s_json = load_settings(env_file=None)
+    assert s_json.admin_emails == {"jsonadmin@storeflow.com"}
+
+
 def test_storage_upload_oversized_payload_returns_413(
     api_client,
     mock_neon_service,

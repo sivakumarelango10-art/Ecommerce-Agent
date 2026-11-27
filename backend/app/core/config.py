@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 import json
-from typing import Any
+from typing import Annotated, Any
 from pydantic import Field, PrivateAttr, SecretStr, ValidationError, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
@@ -117,7 +117,7 @@ class Settings(BaseSettings):
         le=1440,
         validation_alias="ACCESS_TOKEN_EXPIRE_MINUTES",
     )
-    admin_emails: set[str] = Field(
+    admin_emails: Annotated[set[str], NoDecode] = Field(
         default_factory=set,
         validation_alias="ADMIN_EMAILS",
     )
@@ -126,7 +126,7 @@ class Settings(BaseSettings):
         gt=0,
         validation_alias="STORAGE_MAX_UPLOAD_BYTES",
     )
-    storage_allowed_content_types: set[str] = Field(
+    storage_allowed_content_types: Annotated[set[str], NoDecode] = Field(
         default={
             "text/plain",
             "text/markdown",
