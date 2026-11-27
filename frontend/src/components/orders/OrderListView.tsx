@@ -100,9 +100,16 @@ export const OrderListView: React.FC<OrderListViewProps> = ({ onSelectOrder }) =
       )}
 
       {isLoading && orders.length === 0 ? (
-        <div className="py-12 text-center">
-          <div className="animate-spin rounded-full h-7 w-7 border-b-2 border-emerald-600 mx-auto mb-2"></div>
-          <p className="text-xs text-slate-500">Fetching order history...</p>
+        <div className="space-y-2.5 animate-pulse" aria-busy="true" aria-label="Loading order history">
+          {[1, 2, 3].map((row) => (
+            <div key={row} className="p-3.5 rounded-xl border border-slate-200/70 bg-slate-50/50 flex items-center justify-between">
+              <div className="space-y-2">
+                <div className="h-4 w-36 bg-slate-200 rounded"></div>
+                <div className="h-3 w-28 bg-slate-200 rounded"></div>
+              </div>
+              <div className="h-4 w-14 bg-slate-200 rounded"></div>
+            </div>
+          ))}
         </div>
       ) : orders.length === 0 ? (
         <div className="py-12 text-center bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
@@ -117,10 +124,12 @@ export const OrderListView: React.FC<OrderListViewProps> = ({ onSelectOrder }) =
           {orders.map((ord) => {
             const isSelected = selectedId === ord.id;
             return (
-              <div
+              <button
+                type="button"
                 key={ord.id}
                 onClick={() => handleOrderClick(ord)}
-                className={`flex items-center justify-between p-3.5 rounded-xl border cursor-pointer transition-all ${
+                aria-pressed={isSelected}
+                className={`w-full text-left flex items-center justify-between p-3.5 rounded-xl border cursor-pointer transition-all ${
                   isSelected
                     ? 'border-emerald-500 bg-emerald-50/40 shadow-sm ring-1 ring-emerald-400'
                     : 'border-slate-200/70 hover:border-slate-300 hover:bg-slate-50/70'
@@ -137,7 +146,7 @@ export const OrderListView: React.FC<OrderListViewProps> = ({ onSelectOrder }) =
                       {formatDate(ord.created_at)}
                     </span>
                     <span>•</span>
-                    <span className="font-semibold text-slate-700">
+                    <span className="font-semibold text-slate-700 tabular-nums">
                       {formatCurrency(ord.total_amount, ord.currency)}
                     </span>
                   </div>
@@ -147,7 +156,7 @@ export const OrderListView: React.FC<OrderListViewProps> = ({ onSelectOrder }) =
                   <span className="text-xs font-medium mr-1 hidden sm:inline">Inspect</span>
                   <ChevronRight className="w-4 h-4" />
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>

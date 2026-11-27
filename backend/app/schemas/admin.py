@@ -31,6 +31,7 @@ class AdminOverviewResponse(BaseModel):
     total_output_tokens: int | None = None
     total_tokens: int | None = None
     personal_to_company_fallbacks: int
+    fallback_recovery_rate: float | None = None
 
 
 # ---------------------------------------------------------------------------

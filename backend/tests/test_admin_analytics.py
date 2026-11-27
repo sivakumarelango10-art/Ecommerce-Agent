@@ -649,3 +649,63 @@ def test_database_failures_and_missing_data_handled_safely(api_client):
     res_fallbacks = client.get("/api/v1/admin/analytics/fallbacks", headers=auth_header(token))
     assert res_fallbacks.status_code == 200
     assert res_fallbacks.json()["total_fallbacks"] == 0
+
+
+def test_platform_key_source_included_in_company_analytics_and_fallbacks(api_client):
+    """Both COMPANY and PLATFORM_KEY telemetry rows count toward company pool metrics."""
+    client, _ = api_client
+    session_factory = client.app.state.db_session_factory
+    settings = client.app.state.settings
+
+    with session_factory() as session:
+        admin_user, token = create_user_with_role(
+            session, settings, "admin-platform-source@example.com", role="admin"
+        )
+        cid1 = f"plat-{uuid4()}"
+        cid2 = f"plat-fb-{uuid4()}"
+        create_usage_event(
+            session,
+            correlation_id=cid1,
+            user_id=admin_user.id,
+            model_name="llama-3.3-70b-versatile",
+            key_source="PLATFORM_KEY",
+            status="SUCCESS",
+        )
+        create_usage_event(
+            session,
+            correlation_id=cid2,
+            user_id=admin_user.id,
+            key_source="PERSONAL",
+            attempt_number=1,
+            status="COOLDOWN",
+            fallback_reason="personal_key_quota_exhausted",
+            error_category="QUOTA_EXHAUSTED",
+        )
+        create_usage_event(
+            session,
+            correlation_id=cid2,
+            user_id=admin_user.id,
+            key_source="PLATFORM_KEY",
+            attempt_number=2,
+            status="SUCCESS",
+        )
+
+    overview = client.get("/api/v1/admin/overview", headers=auth_header(token)).json()
+    assert overview["company_provider_attempts"] == 2
+    assert overview["personal_provider_attempts"] == 1
+    assert overview["personal_to_company_fallbacks"] == 1
+    assert overview["fallback_recovery_rate"] == 100.0
+
+    user_detail = client.get(f"/api/v1/admin/users/{admin_user.id}", headers=auth_header(token)).json()
+    assert user_detail["source_breakdown"]["company_attempts"] == 2
+
+    sources = client.get("/api/v1/admin/analytics/sources", headers=auth_header(token)).json()
+    company_metric = next(s for s in sources["sources"] if s["source"] == "company")
+    assert company_metric["provider_attempts"] == 2
+    assert all(t["source"] != "platform_key" for t in sources["trends"])
+
+    fallbacks = client.get("/api/v1/admin/analytics/fallbacks", headers=auth_header(token)).json()
+    assert fallbacks["total_fallbacks"] == 1
+    assert fallbacks["successful_company_fallbacks"] == 1
+    assert fallbacks["failed_fallbacks"] == 0
+

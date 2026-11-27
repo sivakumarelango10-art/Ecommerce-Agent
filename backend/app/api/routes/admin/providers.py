@@ -14,7 +14,7 @@ router = APIRouter()
 
 def _get_provider_payload(request: Request) -> AdminProvidersResponse:
     settings = getattr(request.app.state, "settings", None)
-    configured_model = settings.gemini_model if settings else "gemini-2.5-flash"
+    configured_model = settings.gemini_model if settings else "gemini-3.8-flash"
     service = getattr(request.app.state, "gemini_service", None)
 
     slots: list[AdminProviderKeySlotItem] = []

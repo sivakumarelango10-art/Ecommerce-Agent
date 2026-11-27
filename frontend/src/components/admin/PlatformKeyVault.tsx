@@ -71,8 +71,8 @@ export const PlatformKeyVault: React.FC = () => {
       ]);
       setKeys(keysRes);
       setProviders(providersRes);
-      if (providersRes.length > 0 && !newKeyProviderId) {
-        setNewKeyProviderId(providersRes[0].id);
+      if (providersRes.length > 0) {
+        setNewKeyProviderId((prev) => prev || providersRes[0].id);
       }
     } catch (err: any) {
       console.error('Failed to load platform keys or providers:', err);
@@ -80,7 +80,7 @@ export const PlatformKeyVault: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [accessToken, newKeyProviderId]);
+  }, [accessToken]);
 
   useEffect(() => {
     fetchData();

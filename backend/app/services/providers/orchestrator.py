@@ -196,7 +196,7 @@ class AIProviderOrchestrator:
                 "Provider generation unexpected error for %s/%s: %s (no fallback permitted)",
                 target_provider,
                 resolved_model_name,
-                str(exc),
+                type(exc).__name__,
             )
             raise normalized from exc
 

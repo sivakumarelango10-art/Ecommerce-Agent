@@ -17,10 +17,20 @@ export const AdminGuard: React.FC<AdminGuardProps> = ({
   onBackToStore,
   onOpenLogin,
 }) => {
-  const { accessToken, currentUser, isAuthenticated, logout, setUserRole } = useAuth();
+  const {
+    accessToken,
+    currentUser,
+    isAuthenticated,
+    isHydrating = false,
+    sessionError = null,
+    retrySessionVerification,
+    logout,
+    setUserRole,
+  } = useAuth();
   const [isVerifying, setIsVerifying] = useState<boolean>(true);
   const [isAuthorized, setIsAuthorized] = useState<boolean>(false);
   const [forbiddenError, setForbiddenError] = useState<string | null>(null);
+  const [errorStatus, setErrorStatus] = useState<number | null>(null);
 
   const handleReturnToStore = onReturnToStore || onBackToStore || (() => {
     if (typeof window !== 'undefined') window.location.href = '/';
@@ -30,17 +40,26 @@ export const AdminGuard: React.FC<AdminGuardProps> = ({
     let isMounted = true;
 
     async function verifyAdminAccess() {
+      if (isHydrating) {
+        if (isMounted) {
+          setIsVerifying(true);
+        }
+        return;
+      }
+
       if (!isAuthenticated || !accessToken) {
         if (isMounted) {
           setIsVerifying(false);
           setIsAuthorized(false);
           setForbiddenError(null);
+          setErrorStatus(null);
         }
         return;
       }
 
       setIsVerifying(true);
       setForbiddenError(null);
+      setErrorStatus(null);
 
       try {
         // Backend API is the true authorization authority
@@ -71,17 +90,21 @@ export const AdminGuard: React.FC<AdminGuardProps> = ({
             // Revoked, expired or invalid token
             logout();
             setIsAuthorized(false);
+            setErrorStatus(null);
           } else if (err.status === 403) {
             // Authenticated customer attempting admin access
             if (setUserRole) setUserRole('customer');
             setForbiddenError(err.message || 'Access restricted: Administrator privileges required.');
+            setErrorStatus(403);
             setIsAuthorized(false);
           } else {
             setForbiddenError(`Unexpected server verification response: ${err.message}`);
+            setErrorStatus(err.status);
             setIsAuthorized(false);
           }
         } else {
           setForbiddenError('Failed to verify administrative authorization with StoreFlow backend.');
+          setErrorStatus(503);
           setIsAuthorized(false);
         }
         setIsVerifying(false);
@@ -93,10 +116,10 @@ export const AdminGuard: React.FC<AdminGuardProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [accessToken, isAuthenticated, currentUser?.role, logout, setUserRole]);
+  }, [accessToken, isAuthenticated, isHydrating, currentUser?.role, logout, setUserRole]);
 
-  // Case 1: Checking credentials with backend
-  if (isVerifying) {
+  // Case 1: Hydrating stored session or checking credentials with backend
+  if (isHydrating || isVerifying) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center">
         <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-center mb-4 text-emerald-600 shadow-sm animate-pulse">
@@ -110,8 +133,41 @@ export const AdminGuard: React.FC<AdminGuardProps> = ({
     );
   }
 
-  // Case 2: Unauthenticated Guest
+  // Case 2: Unauthenticated Guest (or unverified saved session awaiting retry)
   if (!isAuthenticated || !accessToken) {
+    if (sessionError && retrySessionVerification) {
+      return (
+        <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center">
+          <div className="w-16 h-16 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center mb-6 text-amber-600 shadow-sm">
+            <ShieldAlert className="w-8 h-8" />
+          </div>
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight mb-2">Session Verification Unavailable</h1>
+          <p className="text-slate-600 text-sm max-w-md mb-8">{sessionError}</p>
+          <div className="flex flex-col sm:flex-row items-center gap-3">
+            <Button
+              variant="primary"
+              size="md"
+              onClick={() => void retrySessionVerification()}
+              className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white"
+            >
+              Retry Verification
+            </Button>
+            <Button
+              variant="outline"
+              size="md"
+              onClick={() => {
+                logout();
+                onOpenLogin?.();
+              }}
+              className="w-full sm:w-auto"
+            >
+              Sign In Again
+            </Button>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-6 text-white text-center">
         <div className="w-16 h-16 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center mb-6 shadow-xl text-emerald-400">
@@ -145,14 +201,17 @@ export const AdminGuard: React.FC<AdminGuardProps> = ({
     );
   }
 
-  // Case 3: Authenticated Customer without Admin Privileges (403 Forbidden)
+  // Case 3: Authenticated Customer without Admin Privileges (403) or Backend Verification Error
   if (!isAuthorized || forbiddenError) {
+    const isForbidden = errorStatus === 403 || errorStatus === null;
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center">
         <div className="w-16 h-16 rounded-2xl bg-rose-50 border border-rose-200 flex items-center justify-center mb-6 text-rose-600 shadow-sm">
           <ShieldAlert className="w-8 h-8" />
         </div>
-        <h1 className="text-2xl font-bold text-slate-900 tracking-tight mb-2">Access Denied (403)</h1>
+        <h1 className="text-2xl font-bold text-slate-900 tracking-tight mb-2">
+          {isForbidden ? 'Access Denied (403)' : `Verification Error (${errorStatus})`}
+        </h1>
         <p className="text-slate-600 text-sm max-w-md mb-8">
           {forbiddenError || 'Access restricted: You do not possess administrator privileges.'}
         </p>

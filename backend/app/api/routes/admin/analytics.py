@@ -19,6 +19,7 @@ from backend.app.schemas.admin import (
     AdminSourceMetric,
     AdminSourcesResponse,
 )
+from backend.app.services.providers.telemetry import COMPANY_KEY_SOURCES
 
 router = APIRouter()
 
@@ -81,7 +82,9 @@ def get_usage_analytics(
         period_col,
         func.count(func.distinct(GeminiUsageEvent.correlation_id)).label("logical_requests"),
         func.count(GeminiUsageEvent.id).label("provider_attempts"),
-        func.count(case((func.upper(GeminiUsageEvent.key_source) == "COMPANY", GeminiUsageEvent.id))).label("company_attempts"),
+        func.count(
+            case((func.upper(GeminiUsageEvent.key_source).in_(COMPANY_KEY_SOURCES), GeminiUsageEvent.id))
+        ).label("company_attempts"),
         func.count(case((func.upper(GeminiUsageEvent.key_source) == "PERSONAL", GeminiUsageEvent.id))).label("personal_attempts"),
         func.count(func.distinct(case((GeminiUsageEvent.user_id.is_(None), GeminiUsageEvent.correlation_id)))).label("guest_requests"),
         func.count(case((GeminiUsageEvent.status == "SUCCESS", GeminiUsageEvent.id))).label("successful_attempts"),
@@ -201,9 +204,9 @@ def get_sources_analytics(
     if end_utc:
         base_query = base_query.where(GeminiUsageEvent.created_at <= end_utc)
 
-    # 1. Company source
+    # 1. Company source (includes both legacy COMPANY and normalized PLATFORM_KEY)
     company_row = session.execute(
-        base_query.where(func.upper(GeminiUsageEvent.key_source) == "COMPANY")
+        base_query.where(func.upper(GeminiUsageEvent.key_source).in_(COMPANY_KEY_SOURCES))
     ).one()
 
     # 2. Personal source
@@ -245,9 +248,13 @@ def get_sources_analytics(
 
     # Trends by source over time
     period_col = _get_period_column(session, "daily").label("period")
+    normalized_source = case(
+        (func.upper(GeminiUsageEvent.key_source).in_(COMPANY_KEY_SOURCES), "company"),
+        else_=func.lower(GeminiUsageEvent.key_source),
+    ).label("key_source")
     trend_stmt = select(
         period_col,
-        func.upper(GeminiUsageEvent.key_source).label("key_source"),
+        normalized_source,
         func.count(GeminiUsageEvent.id).label("attempts"),
         func.count(func.distinct(GeminiUsageEvent.correlation_id)).label("logical_requests"),
     )
@@ -255,7 +262,7 @@ def get_sources_analytics(
         trend_stmt = trend_stmt.where(GeminiUsageEvent.created_at >= start_utc)
     if end_utc:
         trend_stmt = trend_stmt.where(GeminiUsageEvent.created_at <= end_utc)
-    trend_stmt = trend_stmt.group_by(period_col, func.upper(GeminiUsageEvent.key_source)).order_by(period_col.asc())
+    trend_stmt = trend_stmt.group_by(period_col, normalized_source).order_by(period_col.asc())
     trend_rows = session.execute(trend_stmt).all()
 
     trends = [
@@ -347,8 +354,8 @@ def get_fallbacks_analytics(
         select(func.count(func.distinct(GeminiUsageEvent.correlation_id)))
         .where(
             GeminiUsageEvent.correlation_id.in_(select(fallback_correlations)),
-            func.upper(GeminiUsageEvent.key_source) == "COMPANY",
-            GeminiUsageEvent.status == "SUCCESS",
+            func.upper(GeminiUsageEvent.key_source).in_(COMPANY_KEY_SOURCES),
+            func.upper(GeminiUsageEvent.status) == "SUCCESS",
             *conds,
         )
     ) or 0

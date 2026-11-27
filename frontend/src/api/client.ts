@@ -117,13 +117,16 @@ export const api = {
   },
 
   chat: {
-    async sendQuestion(question: string, token: string): Promise<SupervisorRouteResponse> {
+    async sendQuestion(question: string, token?: string | null): Promise<SupervisorRouteResponse> {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
       const res = await fetch(`${BASE_URL}/api/v1/shopping/chat`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers,
         body: JSON.stringify({ question }),
       });
       return handleResponse<SupervisorRouteResponse>(res);

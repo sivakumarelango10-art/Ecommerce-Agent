@@ -179,7 +179,7 @@ class NeonService:
                     "response": res.text.strip(),
                 }
         except Exception as exc:
-            logger.error("check_functions failed: %s", exc)
+            logger.error("check_functions failed: %s", type(exc).__name__)
             return {"status": "error", "error": "Function check failed"}
 
     def check_object_storage(self) -> dict[str, Any]:
@@ -215,7 +215,7 @@ class NeonService:
                 "region": self.settings.aws_region or "us-east-2",
             }
         except Exception as exc:
-            logger.error("check_object_storage failed: %s", exc)
+            logger.error("check_object_storage failed: %s", type(exc).__name__)
             return {"status": "error", "error": "Object storage check failed"}
 
     def check_ai_gateway(self) -> dict[str, Any]:
@@ -242,7 +242,7 @@ class NeonService:
                 logger.error("check_ai_gateway returned status %d", res.status_code)
                 return {"status": "error", "status_code": res.status_code}
         except Exception as exc:
-            logger.error("check_ai_gateway failed: %s", exc)
+            logger.error("check_ai_gateway failed: %s", type(exc).__name__)
             return {"status": "error", "error": "AI Gateway check failed"}
 
     def check_auth(self) -> dict[str, Any]:
@@ -266,7 +266,7 @@ class NeonService:
                 logger.error("check_auth returned status %d", res.status_code)
                 return {"status": "error", "status_code": res.status_code}
         except Exception as exc:
-            logger.error("check_auth failed: %s", exc)
+            logger.error("check_auth failed: %s", type(exc).__name__)
             return {"status": "error", "error": "Auth check failed"}
 
     def check_realtime(self) -> dict[str, Any]:

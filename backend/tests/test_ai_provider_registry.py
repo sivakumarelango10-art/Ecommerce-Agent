@@ -1544,3 +1544,57 @@ def test_unrestricted_models_administration_still_works(api_client) -> None:
     )
     assert patch_enable.status_code == 200
     assert patch_enable.json()["is_enabled"] is True
+
+
+def test_provider_and_model_metadata_urls_reject_unsafe_schemes(api_client) -> None:
+    """Reject javascript:/data:/malformed schemes on documentation_url, terms_url, and pricing_url."""
+    client, _ = api_client
+    session_factory = client.app.state.db_session_factory
+
+    with session_factory() as session:
+        _, super_token = create_user_with_role(
+            session=session,
+            settings=client.app.state.settings,
+            email="super_admin_url_test@example.com",
+            role="super_admin",
+        )
+
+    headers = auth_header(super_token)
+
+    bad_provider = client.post(
+        "/api/v1/admin/ai/providers",
+        headers=headers,
+        json={
+            "code": "xss_provider_test",
+            "display_name": "XSS Provider",
+            "documentation_url": "javascript:alert(1)",
+        },
+    )
+    assert bad_provider.status_code == 422
+
+    # Valid provider succeeds, then seed a valid model test
+    ok_provider = client.post(
+        "/api/v1/admin/ai/providers",
+        headers=headers,
+        json={
+            "code": "safe_provider_test",
+            "display_name": "Safe Provider",
+            "documentation_url": "https://docs.example.com/ai",
+        },
+    )
+    assert ok_provider.status_code == 201
+    provider_id = ok_provider.json()["id"]
+
+    for bad_field, bad_val in [("terms_url", "data:text/html,<script>"), ("pricing_url", "vbscript:msgbox(1)")]:
+        bad_model = client.post(
+            "/api/v1/admin/ai/models",
+            headers=headers,
+            json={
+                "provider_id": provider_id,
+                "model_identifier": f"safe-model-{bad_field}",
+                "display_name": "Safe Model",
+                bad_field: bad_val,
+            },
+        )
+        assert bad_model.status_code == 422
+

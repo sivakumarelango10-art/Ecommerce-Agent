@@ -102,4 +102,18 @@ describe('GuestOrderPortal Component', () => {
     // Back to step 1
     expect(screen.getByRole('button', { name: /Send 6-Digit Verification Code/i })).toBeInTheDocument();
   });
+
+  it('exposes accessible modal attributes and closes on Escape key', () => {
+    const onClose = vi.fn();
+    render(
+      <GuestOrderProvider>
+        <GuestOrderPortal isOpen={true} onClose={onClose} />
+      </GuestOrderProvider>
+    );
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });

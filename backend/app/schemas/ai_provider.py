@@ -3,9 +3,23 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+
+
+def _validate_optional_http_url(value: str | None) -> str | None:
+    """Ensure optional metadata links use an HTTP(S) URL with a valid host."""
+    if value is None:
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    parsed = urlsplit(cleaned)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("URL must use http:// or https:// with a valid hostname.")
+    return cleaned
 
 
 # ---------------------------------------------------------------------------
@@ -22,6 +36,11 @@ class AIProviderCreate(BaseModel):
     priority: int = Field(default=100, ge=1, le=1000)
     connection_status: str = Field(default="PLANNED")
 
+    @field_validator("documentation_url")
+    @classmethod
+    def validate_documentation_url(cls, value: str | None) -> str | None:
+        return _validate_optional_http_url(value)
+
 
 class AIProviderUpdate(BaseModel):
     display_name: str | None = Field(default=None, min_length=1, max_length=128)
@@ -31,6 +50,11 @@ class AIProviderUpdate(BaseModel):
     is_enabled: bool | None = None
     priority: int | None = Field(default=None, ge=1, le=1000)
     connection_status: str | None = None
+
+    @field_validator("documentation_url")
+    @classmethod
+    def validate_documentation_url(cls, value: str | None) -> str | None:
+        return _validate_optional_http_url(value)
 
 
 class AIProviderResponse(BaseModel):
@@ -80,6 +104,11 @@ class AIModelCreate(BaseModel):
     is_enabled: bool = True
     is_default: bool = False
 
+    @field_validator("terms_url", "pricing_url")
+    @classmethod
+    def validate_model_urls(cls, value: str | None) -> str | None:
+        return _validate_optional_http_url(value)
+
 
 class AIModelUpdate(BaseModel):
     display_name: str | None = Field(default=None, min_length=1, max_length=128)
@@ -104,6 +133,11 @@ class AIModelUpdate(BaseModel):
     last_pricing_verified_at: datetime | None = None
     is_enabled: bool | None = None
     is_default: bool | None = None
+
+    @field_validator("terms_url", "pricing_url")
+    @classmethod
+    def validate_model_urls(cls, value: str | None) -> str | None:
+        return _validate_optional_http_url(value)
 
 
 class AIModelResponse(BaseModel):

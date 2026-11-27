@@ -17,6 +17,7 @@ export interface AdminOverviewResponse {
   total_output_tokens: number | null;
   total_tokens: number | null;
   personal_to_company_fallbacks: number;
+  fallback_recovery_rate?: number | null;
 }
 
 export interface AdminAnalyticsUsagePoint {

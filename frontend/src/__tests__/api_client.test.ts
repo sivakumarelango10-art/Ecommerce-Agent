@@ -34,6 +34,32 @@ describe('API Client & Token Isolation', () => {
     expect(result.order_answer).toBe('Your order ORD-123 is confirmed.');
   });
 
+  it('allows public guest shopping/general chat requests without Authorization header', async () => {
+    const mockResponse = {
+      destination: 'shopping_agent',
+      order_answer: null,
+      shopping_response: {
+        message: 'Top electronics recommendations.',
+        products: [],
+      },
+      general_answer: null,
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => mockResponse,
+    } as Response);
+
+    const result = await api.chat.sendQuestion('Recommend popular electronics', null);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, options] = fetchSpy.mock.calls[0];
+    expect(url).toBe('/api/v1/shopping/chat');
+    expect((options?.headers as Record<string, string>)['Authorization']).toBeUndefined();
+    expect(result.destination).toBe('shopping_agent');
+  });
+
   it('sends aligned login payload with email and password', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: true,

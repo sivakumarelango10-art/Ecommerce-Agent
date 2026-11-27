@@ -113,4 +113,30 @@ describe('AuthModal Component', () => {
 
     expect(screen.getByText('Passwords do not match.')).toBeInTheDocument();
   });
+
+  it('exposes accessible dialog attributes, renders pending question context, and closes on Escape while clearing passwords', () => {
+    const onClose = vi.fn();
+    render(
+      <AuthProvider>
+        <AuthModal
+          isOpen={true}
+          onClose={onClose}
+          pendingQuestion="Where is my order ORD-99?"
+          promptNotice="Sign in to continue your question"
+        />
+      </AuthProvider>
+    );
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    expect(screen.getByText(/Where is my order ORD-99\?/i)).toBeInTheDocument();
+
+    const passwordInput = screen.getByLabelText(/^Password/i) as HTMLInputElement;
+    fireEvent.change(passwordInput, { target: { value: 'TemporaryPassword123!' } });
+    expect(passwordInput.value).toBe('TemporaryPassword123!');
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(passwordInput.value).toBe('');
+  });
 });

@@ -17,6 +17,7 @@ import { useAuth } from '../../context/AuthContext';
 import { api } from '../../api/client';
 import type { AIProvider, ProviderConnectionStatus } from '../../types/admin';
 import { AIProviderDetail } from './AIProviderDetail';
+import { getSafeExternalUrl } from '../../utils/url';
 
 export const AIProviderCatalogue: React.FC = () => {
   const { accessToken, currentUser } = useAuth();
@@ -349,19 +350,22 @@ export const AIProviderCatalogue: React.FC = () => {
 
                 {/* Footer Actions */}
                 <div className="pt-2 flex items-center justify-between gap-2 mt-auto">
-                  {provider.documentation_url ? (
-                    <a
-                      href={provider.documentation_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center text-xs text-slate-500 hover:text-slate-800 hover:underline"
-                    >
-                      <ExternalLink className="w-3 h-3 mr-1" />
-                      Docs
-                    </a>
-                  ) : (
-                    <span className="text-xs text-slate-400">No docs link</span>
-                  )}
+                  {(() => {
+                    const safeDocUrl = getSafeExternalUrl(provider.documentation_url);
+                    return safeDocUrl ? (
+                      <a
+                        href={safeDocUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center text-xs text-slate-500 hover:text-slate-800 hover:underline"
+                      >
+                        <ExternalLink className="w-3 h-3 mr-1" />
+                        Docs
+                      </a>
+                    ) : (
+                      <span className="text-xs text-slate-400">No docs link</span>
+                    );
+                  })()}
 
                   <button
                     type="button"

@@ -748,7 +748,7 @@ class GroqProviderAdapter(AIProviderAdapter):
             try:
                 self._on_key_status_change(slot.key_id, slot.status, slot.cooldown_until)
             except Exception as exc:
-                logger.warning("Error in key status callback: %s", exc)
+                logger.warning("Error in key status callback: %s", type(exc).__name__)
 
     def _mark_slot_invalid(self, slot: GroqKeySlot) -> None:
         """Mark a key slot as invalid upon receiving 401/403 credential rejection."""
@@ -761,7 +761,7 @@ class GroqProviderAdapter(AIProviderAdapter):
             try:
                 self._on_key_status_change(slot.key_id, slot.status, None)
             except Exception as exc:
-                logger.warning("Error in key status callback: %s", exc)
+                logger.warning("Error in key status callback: %s", type(exc).__name__)
 
     def _build_payload(self, request: GenerationRequest, model_name: str) -> dict[str, Any]:
         """Convert GenerationRequest into documented Groq chat completion request payload."""
@@ -1326,7 +1326,7 @@ class GroqProviderAdapter(AIProviderAdapter):
                     db_key.cooldown_until = cooldown_until
                     session.commit()
             except Exception as exc:
-                logger.warning("Failed to persist key status update: %s", exc)
+                logger.warning("Failed to persist key status update: %s", type(exc).__name__)
                 try:
                     session.rollback()
                 except Exception:

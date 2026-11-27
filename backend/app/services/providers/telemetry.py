@@ -11,6 +11,9 @@ from backend.app.db.models import GeminiUsageEvent
 
 logger = logging.getLogger(__name__)
 
+# Telemetry source values representing company/platform-managed credentials.
+COMPANY_KEY_SOURCES: tuple[str, ...] = ("COMPANY", "PLATFORM_KEY")
+
 
 @dataclass(frozen=True)
 class NormalizedTelemetryRecord:

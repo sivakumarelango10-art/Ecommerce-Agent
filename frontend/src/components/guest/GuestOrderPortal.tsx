@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   X,
   ShieldCheck,
@@ -36,6 +36,22 @@ export const GuestOrderPortal: React.FC<GuestOrderPortalProps> = ({ isOpen, onCl
   const [inputEmail, setInputEmail] = useState('');
   const [otp, setOtp] = useState('');
 
+  const handleClose = useCallback(() => {
+    if (isLoading) return;
+    onClose();
+  }, [isLoading, onClose]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        handleClose();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, handleClose]);
+
   if (!isOpen) return null;
 
   const handleRequestOtp = async (e: React.FormEvent) => {
@@ -68,8 +84,20 @@ export const GuestOrderPortal: React.FC<GuestOrderPortalProps> = ({ isOpen, onCl
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-xl max-h-[90vh] overflow-y-auto">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-200"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          handleClose();
+        }
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="guest-portal-title"
+        className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-xl max-h-[90vh] overflow-y-auto"
+      >
         {/* Header */}
         <div className="relative p-6 border-b border-slate-100 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -79,7 +107,7 @@ export const GuestOrderPortal: React.FC<GuestOrderPortalProps> = ({ isOpen, onCl
               className="h-8 sm:h-9 w-auto object-contain hidden sm:block"
             />
             <div className="sm:border-l sm:border-slate-200 sm:pl-3">
-              <h3 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-1.5">
+              <h3 id="guest-portal-title" className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-1.5">
                 <ShieldCheck className="w-5 h-5 text-emerald-600" />
                 <span>Guest Order Verification</span>
               </h3>
@@ -87,8 +115,10 @@ export const GuestOrderPortal: React.FC<GuestOrderPortalProps> = ({ isOpen, onCl
             </div>
           </div>
           <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+            type="button"
+            onClick={handleClose}
+            disabled={isLoading}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-40"
             aria-label="Close"
           >
             <X className="w-5 h-5" />

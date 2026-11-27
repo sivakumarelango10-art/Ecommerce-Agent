@@ -27,6 +27,7 @@ from backend.app.schemas.admin import (
     AdminUserStatusUpdateRequest,
 )
 from backend.app.services.admin_audit_service import record_admin_audit_event
+from backend.app.services.providers.telemetry import COMPANY_KEY_SOURCES
 
 router = APIRouter()
 
@@ -66,7 +67,9 @@ def list_users(
             GeminiUsageEvent.user_id.label("uid"),
             func.count(func.distinct(GeminiUsageEvent.correlation_id)).label("total_requests"),
             func.count(GeminiUsageEvent.id).label("total_attempts"),
-            func.count(case((func.upper(GeminiUsageEvent.key_source) == "COMPANY", GeminiUsageEvent.id))).label("company_attempts"),
+            func.count(
+                case((func.upper(GeminiUsageEvent.key_source).in_(COMPANY_KEY_SOURCES), GeminiUsageEvent.id))
+            ).label("company_attempts"),
             func.count(case((func.upper(GeminiUsageEvent.key_source) == "PERSONAL", GeminiUsageEvent.id))).label("personal_attempts"),
             func.sum(GeminiUsageEvent.total_tokens).label("total_tokens"),
             func.max(GeminiUsageEvent.created_at).label("last_ai_activity"),
@@ -156,7 +159,9 @@ def get_user_detail(
         select(
             func.count(func.distinct(GeminiUsageEvent.correlation_id)).label("total_requests"),
             func.count(GeminiUsageEvent.id).label("total_attempts"),
-            func.count(case((func.upper(GeminiUsageEvent.key_source) == "COMPANY", GeminiUsageEvent.id))).label("company_attempts"),
+            func.count(
+                case((func.upper(GeminiUsageEvent.key_source).in_(COMPANY_KEY_SOURCES), GeminiUsageEvent.id))
+            ).label("company_attempts"),
             func.count(case((func.upper(GeminiUsageEvent.key_source) == "PERSONAL", GeminiUsageEvent.id))).label("personal_attempts"),
             func.sum(GeminiUsageEvent.input_tokens).label("input_tokens"),
             func.sum(GeminiUsageEvent.output_tokens).label("output_tokens"),

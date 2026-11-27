@@ -11,11 +11,15 @@ import { ChatMessage, ShoppingProductItem } from '../../types/api';
 interface ChatMessageItemProps {
   message: ChatMessage;
   onInspectOrderNumber?: (orderNumber: string) => void;
+  onTriggerSignIn?: (pendingQuestion?: string) => void;
+  onOpenGuestPortal?: () => void;
 }
 
 export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
   message,
   onInspectOrderNumber,
+  onTriggerSignIn,
+  onOpenGuestPortal,
 }) => {
   const isUser = message.sender === 'user';
 
@@ -168,6 +172,30 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
                   <ExternalLink className="w-3 h-3 opacity-60" />
                 </button>
               ))}
+            </div>
+          )}
+
+          {/* Contextual Authentication Actions for Protected Guest Queries */}
+          {message.requiresAuthPrompt && (onTriggerSignIn || onOpenGuestPortal) && (
+            <div className="pt-2.5 border-t border-slate-100 flex flex-wrap items-center gap-2">
+              {onTriggerSignIn && (
+                <button
+                  type="button"
+                  onClick={() => onTriggerSignIn(message.pendingQuestionText)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white hover:bg-slate-800 transition-colors shadow-2xs"
+                >
+                  Sign In to Continue
+                </button>
+              )}
+              {onOpenGuestPortal && (
+                <button
+                  type="button"
+                  onClick={onOpenGuestPortal}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white text-slate-700 hover:bg-slate-50 border border-slate-300 transition-colors"
+                >
+                  Guest Order Lookup
+                </button>
+              )}
             </div>
           )}
         </div>

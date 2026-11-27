@@ -10,6 +10,7 @@ from backend.app.core.datetime_utils import utc_now
 from backend.app.db.models import GeminiUsageEvent, Order, User
 from backend.app.db.session import get_db_session
 from backend.app.schemas.admin import AdminOverviewResponse
+from backend.app.services.providers.telemetry import COMPANY_KEY_SOURCES
 
 router = APIRouter()
 
@@ -48,17 +49,37 @@ def get_admin_overview(
         select(
             func.count(func.distinct(GeminiUsageEvent.correlation_id)).label("logical_requests"),
             func.count(GeminiUsageEvent.id).label("provider_attempts"),
-            func.count(case((func.upper(GeminiUsageEvent.key_source) == "COMPANY", GeminiUsageEvent.id))).label("company_attempts"),
+            func.count(
+                case((func.upper(GeminiUsageEvent.key_source).in_(COMPANY_KEY_SOURCES), GeminiUsageEvent.id))
+            ).label("company_attempts"),
             func.count(case((func.upper(GeminiUsageEvent.key_source) == "PERSONAL", GeminiUsageEvent.id))).label("personal_attempts"),
             func.count(func.distinct(case((GeminiUsageEvent.user_id.is_(None), GeminiUsageEvent.correlation_id)))).label("guest_requests"),
-            func.count(case((GeminiUsageEvent.status == "SUCCESS", GeminiUsageEvent.id))).label("success"),
-            func.count(case((GeminiUsageEvent.status != "SUCCESS", GeminiUsageEvent.id))).label("failed"),
+            func.count(case((func.upper(GeminiUsageEvent.status) == "SUCCESS", GeminiUsageEvent.id))).label("success"),
+            func.count(case((func.upper(GeminiUsageEvent.status) != "SUCCESS", GeminiUsageEvent.id))).label("failed"),
             func.sum(GeminiUsageEvent.input_tokens).label("input_tokens"),
             func.sum(GeminiUsageEvent.output_tokens).label("output_tokens"),
             func.sum(GeminiUsageEvent.total_tokens).label("total_tokens"),
             func.count(func.distinct(case((GeminiUsageEvent.fallback_reason.isnot(None), GeminiUsageEvent.correlation_id)))).label("fallbacks"),
         )
     ).one()
+
+    total_fallbacks = ai_stats.fallbacks or 0
+    if total_fallbacks > 0:
+        fallback_correlations = (
+            select(GeminiUsageEvent.correlation_id)
+            .where(GeminiUsageEvent.fallback_reason.isnot(None))
+            .distinct()
+        )
+        recovered_fallbacks = session.scalar(
+            select(func.count(func.distinct(GeminiUsageEvent.correlation_id))).where(
+                GeminiUsageEvent.correlation_id.in_(fallback_correlations),
+                func.upper(GeminiUsageEvent.key_source).in_(COMPANY_KEY_SOURCES),
+                func.upper(GeminiUsageEvent.status) == "SUCCESS",
+            )
+        ) or 0
+        fallback_recovery_rate = round((recovered_fallbacks / total_fallbacks) * 100.0, 1)
+    else:
+        fallback_recovery_rate = 100.0
 
     return AdminOverviewResponse(
         total_registered_users=user_stats.total or 0,
@@ -78,5 +99,6 @@ def get_admin_overview(
         total_input_tokens=int(ai_stats.input_tokens) if ai_stats.input_tokens is not None else None,
         total_output_tokens=int(ai_stats.output_tokens) if ai_stats.output_tokens is not None else None,
         total_tokens=int(ai_stats.total_tokens) if ai_stats.total_tokens is not None else None,
-        personal_to_company_fallbacks=ai_stats.fallbacks or 0,
+        personal_to_company_fallbacks=total_fallbacks,
+        fallback_recovery_rate=fallback_recovery_rate,
     )

@@ -23,6 +23,7 @@ export interface AdminOverviewProps {
 export const AdminOverview: React.FC<AdminOverviewProps> = ({ onNavigate }) => {
   const { accessToken } = useAuth();
   const [data, setData] = useState<AdminOverviewResponse | null>(null);
+  const [fallbackRecoveryRate, setFallbackRecoveryRate] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,6 +34,24 @@ export const AdminOverview: React.FC<AdminOverviewProps> = ({ onNavigate }) => {
     try {
       const res = await api.admin.getOverview(accessToken);
       setData(res);
+      if (typeof res.fallback_recovery_rate === 'number') {
+        setFallbackRecoveryRate(res.fallback_recovery_rate);
+      } else if (res.personal_to_company_fallbacks === 0) {
+        setFallbackRecoveryRate(100.0);
+      } else {
+        try {
+          const fallbackRes = await api.admin.getAnalyticsFallbacks(accessToken);
+          if (fallbackRes.total_fallbacks > 0) {
+            setFallbackRecoveryRate(
+              Number(((fallbackRes.successful_company_fallbacks / fallbackRes.total_fallbacks) * 100).toFixed(1))
+            );
+          } else {
+            setFallbackRecoveryRate(100.0);
+          }
+        } catch {
+          setFallbackRecoveryRate(null);
+        }
+      }
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         setError(err.message);
@@ -297,9 +316,9 @@ export const AdminOverview: React.FC<AdminOverviewProps> = ({ onNavigate }) => {
           <div>
             <div className="text-xs text-slate-500 mb-1">Fallback Recovery Rate</div>
             <div className="text-3xl font-extrabold text-amber-600">
-              {data.personal_to_company_fallbacks > 0
-                ? '96.0%'
-                : '100.0%'}
+              {fallbackRecoveryRate !== null
+                ? `${fallbackRecoveryRate.toFixed(1)}%`
+                : 'N/A'}
             </div>
             <div className="text-xs text-slate-400 mt-1">
               Automated zero-downtime routing to company multi-key pool

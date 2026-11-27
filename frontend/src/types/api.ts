@@ -173,6 +173,8 @@ export interface ChatMessage {
   generalAnswer?: string | null;
   referencedOrderNumbers?: string[];
   isError?: boolean;
+  requiresAuthPrompt?: boolean;
+  pendingQuestionText?: string;
 }
 
 export interface PersonalGeminiKeyResponse {

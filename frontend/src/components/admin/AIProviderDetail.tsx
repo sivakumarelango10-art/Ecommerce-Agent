@@ -14,6 +14,7 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../api/client';
 import type { AIProvider, AIModel, PlatformAIKey } from '../../types/admin';
+import { getSafeExternalUrl } from '../../utils/url';
 
 export interface AIProviderDetailProps {
   providerId: string;
@@ -142,17 +143,20 @@ export const AIProviderDetail: React.FC<AIProviderDetailProps> = ({
               {provider.connection_status}
             </span>
 
-            {provider.documentation_url && (
-              <a
-                href={provider.documentation_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center px-3 py-1 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-full hover:bg-slate-50 shadow-xs transition"
-              >
-                <ExternalLink className="w-3 h-3 mr-1" />
-                Documentation
-              </a>
-            )}
+            {(() => {
+              const safeDocUrl = getSafeExternalUrl(provider.documentation_url);
+              return safeDocUrl ? (
+                <a
+                  href={safeDocUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center px-3 py-1 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-full hover:bg-slate-50 shadow-xs transition"
+                >
+                  <ExternalLink className="w-3 h-3 mr-1" />
+                  Documentation
+                </a>
+              ) : null;
+            })()}
           </div>
         </div>
 

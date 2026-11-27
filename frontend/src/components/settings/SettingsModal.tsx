@@ -108,6 +108,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
     }
   }, [isOpen, fetchKeyStatus]);
 
+  const handleClose = useCallback(() => {
+    // Clear sensitive key input on close
+    setApiKeyInput('');
+    setShowPlaintext(false);
+    setValidationResult(null);
+    setFormError(null);
+    setShowDeleteConfirm(false);
+    onClose();
+  }, [onClose]);
+
   // Handle ESC key to close modal
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -117,17 +127,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen]);
-
-  const handleClose = () => {
-    // Clear sensitive key input on close
-    setApiKeyInput('');
-    setShowPlaintext(false);
-    setValidationResult(null);
-    setFormError(null);
-    setShowDeleteConfirm(false);
-    onClose();
-  };
+  }, [isOpen, handleClose]);
 
   const handleValidate = async () => {
     const key = apiKeyInput.trim();
@@ -346,7 +346,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                   <div className="flex items-center gap-2">
                     <h3 className="text-sm font-semibold text-slate-900">Google Gemini</h3>
                     <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
-                      gemini-2.5-flash
+                      BYOK Supported
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 mt-0.5">

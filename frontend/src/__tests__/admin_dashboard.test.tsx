@@ -794,4 +794,55 @@ describe('StoreFlow Phase 6D: Admin Dashboard Frontend Test Suite', () => {
       expect(screen.getByText(/403/i)).toBeInTheDocument();
     });
   });
+
+  it('19. AdminOverview computes fallback recovery rate dynamically without hardcoded 96%', async () => {
+    vi.spyOn(api.admin, 'getOverview').mockResolvedValueOnce({
+      ...mockOverviewData,
+      personal_to_company_fallbacks: 10,
+      fallback_recovery_rate: undefined,
+    });
+    vi.spyOn(api.admin, 'getAnalyticsFallbacks').mockResolvedValueOnce({
+      ...mockFallbacksData,
+      total_fallbacks: 10,
+      successful_company_fallbacks: 5,
+      failed_fallbacks: 5,
+    });
+
+    renderWithAuth(<AdminOverview />);
+
+    await waitFor(() => {
+      expect(screen.getByText('50.0%')).toBeInTheDocument();
+    });
+  });
+
+  it('20. UserManagement renders uppercase SUCCESS execution status cleanly in green', async () => {
+    vi.spyOn(api.admin, 'getUser').mockResolvedValueOnce({
+      ...mockUserDetail,
+      recent_activity: [
+        {
+          correlation_id: 'corr-upper-1',
+          model_name: 'gemini-3.8-flash',
+          key_source: 'PLATFORM_KEY',
+          status: 'SUCCESS',
+          error_category: null,
+          total_tokens: 900,
+          latency_ms: 210,
+          created_at: '2026-11-24T18:00:00Z',
+        },
+      ],
+    });
+
+    renderWithAuth(<UserManagement />);
+
+    await waitFor(() => {
+      expect(screen.getByText('customer1@example.com')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getAllByTitle(/View Full Profile & AI Usage/i)[0]);
+
+    await waitFor(() => {
+      const statusBadge = screen.getByText('SUCCESS');
+      expect(statusBadge).toHaveClass('bg-emerald-100');
+      expect(statusBadge).not.toHaveClass('bg-rose-100');
+    });
+  });
 });

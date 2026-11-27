@@ -945,4 +945,22 @@ describe('StoreFlow Phase 6E.2: Admin AI Control Centre Frontend Test Suite', ()
     expect(enableButton).toBeDisabled();
     expect(enableButton).toHaveAttribute('title', expect.stringContaining('Enterprise committed-spend contract required'));
   });
+
+  it('26. AIProviderCatalogue omits unsafe non-HTTP(S) documentation_url links', async () => {
+    vi.spyOn(api.admin.ai, 'listProviders').mockResolvedValueOnce([
+      {
+        ...mockProviders[0],
+        documentation_url: 'javascript:alert(document.cookie)',
+      },
+    ]);
+
+    renderWithAuth(<AIProviderCatalogue />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Google Gemini')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole('link', { name: /Docs/i })).not.toBeInTheDocument();
+    expect(screen.getByText('No docs link')).toBeInTheDocument();
+  });
 });

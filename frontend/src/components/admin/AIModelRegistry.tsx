@@ -65,8 +65,8 @@ export const AIModelRegistry: React.FC = () => {
       ]);
       setModels(modelsRes);
       setProviders(providersRes);
-      if (providersRes.length > 0 && !newModelProviderId) {
-        setNewModelProviderId(providersRes[0].id);
+      if (providersRes.length > 0) {
+        setNewModelProviderId((prev) => prev || providersRes[0].id);
       }
     } catch (err: any) {
       console.error('Failed to load AI models or providers:', err);
@@ -74,7 +74,7 @@ export const AIModelRegistry: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [accessToken, newModelProviderId]);
+  }, [accessToken]);
 
   useEffect(() => {
     fetchData();
