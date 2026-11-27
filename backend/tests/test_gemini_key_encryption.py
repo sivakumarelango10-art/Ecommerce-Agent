@@ -222,6 +222,40 @@ def test_missing_encryption_secret_in_development_is_allowed(monkeypatch):
     assert settings.user_key_encryption_secret is None
 
 
+def test_blank_optional_secrets_do_not_crash_staging_startup(monkeypatch):
+    """Verify blank optional secrets from dashboard forms normalize safely without weakening validation."""
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///:memory:")
+    monkeypatch.setenv("AUTH_SECRET_KEY", "test-auth-secret-key-0123456789abcdef")
+    monkeypatch.setenv("USER_KEY_ENCRYPTION_SECRET", "staging-user-enc-secret-0123456789abcdef")
+    monkeypatch.setenv("GEMINI_API_KEY", "   ")
+    monkeypatch.setenv("GEMINI_API_KEYS", '[{"key": "pool-key-1", "quota_group": "default"}]')
+    monkeypatch.setenv("PLATFORM_KEY_ENCRYPTION_SECRET", "")
+    monkeypatch.setenv("OTP_HASH_SECRET", "  ")
+    monkeypatch.setenv("SMTP_HOST", "")
+    monkeypatch.setenv("SMTP_USERNAME", "")
+    monkeypatch.setenv("SMTP_PASSWORD", "")
+
+    settings = Settings(_env_file=None)
+    assert settings.platform_key_encryption_secret is None
+    assert settings.otp_hash_secret is None
+    assert settings.smtp_host is None
+    assert settings.smtp_username is None
+    assert settings.smtp_password is None
+    assert settings.gemini_api_key.get_secret_value() == "pool-key-1"
+
+    # Blank USER_KEY_ENCRYPTION_SECRET must still fail closed in staging
+    monkeypatch.setenv("USER_KEY_ENCRYPTION_SECRET", "   ")
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(_env_file=None)
+    assert "USER_KEY_ENCRYPTION_SECRET is required in staging and production" in str(exc_info.value)
+
+    # Blank USER_KEY_ENCRYPTION_SECRET in development normalizes cleanly to None
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    dev_settings = Settings(_env_file=None)
+    assert dev_settings.user_key_encryption_secret is None
+
+
 # ---------------------------------------------------------------------------
 # 6. Database Model Schema and Relationship Tests
 # ---------------------------------------------------------------------------

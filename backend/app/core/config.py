@@ -1,8 +1,9 @@
 from dataclasses import dataclass
 import json
+import logging
 from typing import Annotated, Any
 from pydantic import Field, PrivateAttr, SecretStr, ValidationError, field_validator, model_validator
-from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict, SettingsError
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
@@ -11,9 +12,63 @@ from backend.app.core.constants import (
     ISO_4217_CURRENCY_CODES,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class ConfigurationError(RuntimeError):
     """Raised when required application configuration is missing or invalid."""
+
+
+def _blank_secret_to_none(value: SecretStr | None) -> SecretStr | None:
+    """Normalize empty or whitespace-only optional secrets from dashboard/env forms to None."""
+    if value is None or not value.get_secret_value().strip():
+        return None
+    return value
+
+
+def _validate_min_secret_bytes(
+    value: SecretStr | None,
+    env_name: str,
+    min_bytes: int,
+) -> SecretStr | None:
+    """Normalize blank optional secrets to None and enforce minimum UTF-8 byte length when set."""
+    cleaned = _blank_secret_to_none(value)
+    if cleaned is None:
+        return None
+    if len(cleaned.get_secret_value().strip().encode("utf-8")) < min_bytes:
+        raise ValueError(f"{env_name} must be at least {min_bytes} bytes")
+    return cleaned
+
+
+def _check_secret_distinct(
+    secret_value: SecretStr | None,
+    secret_env_name: str,
+    disallowed_sources: list[tuple[SecretStr | None, str]],
+) -> None:
+    """Ensure a configured encryption secret does not reuse another platform secret."""
+    if secret_value is None:
+        return
+    candidate = secret_value.get_secret_value().strip()
+    if not candidate:
+        return
+    for other_value, other_env_name in disallowed_sources:
+        if other_value is not None and candidate == other_value.get_secret_value().strip():
+            raise ValueError(f"{secret_env_name} must not reuse {other_env_name}")
+
+
+def _format_safe_validation_errors(exc: ValidationError) -> str:
+    """Summarize Pydantic validation errors using field names and reasons without exposing inputs."""
+    parts: list[str] = []
+    for err in exc.errors(include_url=False, include_context=False, include_input=False):
+        loc = ".".join(str(item) for item in err.get("loc", ()))
+        msg = str(err.get("msg", "Invalid value"))
+        if msg.startswith("Value error, "):
+            msg = msg[len("Value error, "):]
+        if loc and not msg.upper().startswith(loc.upper()):
+            parts.append(f"{loc}: {msg}")
+        else:
+            parts.append(msg)
+    return "; ".join(parts) if parts else "Invalid settings configuration"
 
 
 @dataclass(frozen=True)
@@ -244,9 +299,30 @@ class Settings(BaseSettings):
     @field_validator("gemini_api_key")
     @classmethod
     def api_key_must_not_be_blank(cls, value: SecretStr | None) -> SecretStr | None:
-        if value is not None and not value.get_secret_value().strip():
-            raise ValueError("GEMINI_API_KEY must not be blank")
-        return value
+        # Treat blank GEMINI_API_KEY="" as unset so GEMINI_API_KEYS can supply the key pool;
+        # validate_gemini_keys_and_pool still fails closed if neither source is configured.
+        return _blank_secret_to_none(value)
+
+    @field_validator(
+        "database_url_unpooled",
+        "neon_ai_gateway_token",
+        "neon_realtime_secret",
+        "aws_access_key_id",
+        "aws_secret_access_key",
+        "smtp_username",
+        "smtp_password",
+    )
+    @classmethod
+    def normalize_optional_blank_secrets(cls, value: SecretStr | None) -> SecretStr | None:
+        return _blank_secret_to_none(value)
+
+    @field_validator("smtp_host", "smtp_from_email")
+    @classmethod
+    def normalize_optional_blank_strings(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
 
     @field_validator("gemini_model")
     @classmethod
@@ -276,7 +352,8 @@ class Settings(BaseSettings):
     @field_validator("auth_secret_key")
     @classmethod
     def auth_secret_must_be_long_enough(cls, value: SecretStr) -> SecretStr:
-        if len(value.get_secret_value().encode("utf-8")) < 32:
+        raw = value.get_secret_value()
+        if not raw.strip() or len(raw.encode("utf-8")) < 32:
             raise ValueError("AUTH_SECRET_KEY must be at least 32 bytes")
         return value
 
@@ -297,26 +374,21 @@ class Settings(BaseSettings):
     def otp_hash_secret_must_be_adequate(
         cls, value: SecretStr | None
     ) -> SecretStr | None:
-        if value is not None:
-            raw = value.get_secret_value().strip()
-            if not raw:
-                raise ValueError("OTP_HASH_SECRET must not be blank if provided")
-            if len(raw.encode("utf-8")) < 16:
-                raise ValueError("OTP_HASH_SECRET must be at least 16 bytes")
-        return value
+        return _validate_min_secret_bytes(value, "OTP_HASH_SECRET", 16)
 
     @field_validator("user_key_encryption_secret")
     @classmethod
     def user_key_encryption_secret_must_be_adequate(
         cls, value: SecretStr | None
     ) -> SecretStr | None:
-        if value is not None:
-            raw = value.get_secret_value().strip()
-            if not raw:
-                raise ValueError("USER_KEY_ENCRYPTION_SECRET must not be blank if provided")
-            if len(raw.encode("utf-8")) < 32:
-                raise ValueError("USER_KEY_ENCRYPTION_SECRET must be at least 32 bytes")
-        return value
+        return _validate_min_secret_bytes(value, "USER_KEY_ENCRYPTION_SECRET", 32)
+
+    @field_validator("platform_key_encryption_secret")
+    @classmethod
+    def platform_key_encryption_secret_must_be_adequate(
+        cls, value: SecretStr | None
+    ) -> SecretStr | None:
+        return _validate_min_secret_bytes(value, "PLATFORM_KEY_ENCRYPTION_SECRET", 32)
 
     @model_validator(mode="after")
     def validate_gemini_keys_and_pool(self) -> "Settings":
@@ -409,36 +481,26 @@ class Settings(BaseSettings):
             if self.user_key_encryption_secret is None or not self.user_key_encryption_secret.get_secret_value().strip():
                 raise ValueError("USER_KEY_ENCRYPTION_SECRET is required in staging and production")
 
-        if self.user_key_encryption_secret is not None:
-            enc_val = self.user_key_encryption_secret.get_secret_value().strip()
-            if not enc_val or len(enc_val.encode("utf-8")) < 32:
-                raise ValueError("USER_KEY_ENCRYPTION_SECRET must be at least 32 bytes")
-            if hasattr(self, "auth_secret_key") and self.auth_secret_key:
-                if enc_val == self.auth_secret_key.get_secret_value().strip():
-                    raise ValueError("USER_KEY_ENCRYPTION_SECRET must not reuse AUTH_SECRET_KEY")
-            if self.gemini_api_key is not None:
-                if enc_val == self.gemini_api_key.get_secret_value().strip():
-                    raise ValueError("USER_KEY_ENCRYPTION_SECRET must not reuse GEMINI_API_KEY")
-            for k in self.platform_gemini_keys:
-                if enc_val == k.key.get_secret_value().strip():
-                    raise ValueError("USER_KEY_ENCRYPTION_SECRET must not reuse GEMINI_API_KEY")
+        gemini_sources: list[tuple[SecretStr | None, str]] = [
+            (self.gemini_api_key, "GEMINI_API_KEY"),
+            *[(item.key, "GEMINI_API_KEY") for item in self.platform_gemini_keys],
+        ]
+        auth_secret = getattr(self, "auth_secret_key", None)
 
-        if self.platform_key_encryption_secret is not None:
-            plat_val = self.platform_key_encryption_secret.get_secret_value().strip()
-            if not plat_val or len(plat_val.encode("utf-8")) < 32:
-                raise ValueError("PLATFORM_KEY_ENCRYPTION_SECRET must be at least 32 bytes")
-            if hasattr(self, "auth_secret_key") and self.auth_secret_key:
-                if plat_val == self.auth_secret_key.get_secret_value().strip():
-                    raise ValueError("PLATFORM_KEY_ENCRYPTION_SECRET must not reuse AUTH_SECRET_KEY")
-            if self.user_key_encryption_secret is not None:
-                if plat_val == self.user_key_encryption_secret.get_secret_value().strip():
-                    raise ValueError("PLATFORM_KEY_ENCRYPTION_SECRET must not reuse USER_KEY_ENCRYPTION_SECRET")
-            if self.gemini_api_key is not None:
-                if plat_val == self.gemini_api_key.get_secret_value().strip():
-                    raise ValueError("PLATFORM_KEY_ENCRYPTION_SECRET must not reuse GEMINI_API_KEY")
-            for k in self.platform_gemini_keys:
-                if plat_val == k.key.get_secret_value().strip():
-                    raise ValueError("PLATFORM_KEY_ENCRYPTION_SECRET must not reuse GEMINI_API_KEY")
+        _check_secret_distinct(
+            self.user_key_encryption_secret,
+            "USER_KEY_ENCRYPTION_SECRET",
+            [(auth_secret, "AUTH_SECRET_KEY"), *gemini_sources],
+        )
+        _check_secret_distinct(
+            self.platform_key_encryption_secret,
+            "PLATFORM_KEY_ENCRYPTION_SECRET",
+            [
+                (auth_secret, "AUTH_SECRET_KEY"),
+                (self.user_key_encryption_secret, "USER_KEY_ENCRYPTION_SECRET"),
+                *gemini_sources,
+            ],
+        )
         return self
 
     @field_validator("allowed_origins")
@@ -521,6 +583,24 @@ def load_settings(*, env_file: str | None = ".env") -> Settings:
     try:
         return Settings(_env_file=env_file)
     except ValidationError as exc:
+        details = _format_safe_validation_errors(exc)
+        logger.error(
+            "Application configuration validation failed: %s",
+            details,
+            extra={"event": "configuration_error", "error_type": type(exc).__name__},
+        )
         raise ConfigurationError(
-            "Application configuration is invalid. Check the required Gemini, database, and authentication settings."
+            f"Application configuration is invalid ({details}). "
+            "Check the required Gemini, database, encryption, and authentication settings."
+        ) from exc
+    except SettingsError as exc:
+        logger.error(
+            "Application settings parsing failed (%s): %s",
+            type(exc).__name__,
+            exc,
+            extra={"event": "configuration_error", "error_type": type(exc).__name__},
+        )
+        raise ConfigurationError(
+            f"Application configuration is invalid ({exc}). "
+            "Check environment variable formatting."
         ) from exc

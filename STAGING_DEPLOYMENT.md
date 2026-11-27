@@ -183,19 +183,22 @@ The application requires SPA path rewrites and HTTP security headers:
 
 ## 7. Staging Environment Variables Checklist
 
-All 23 backend configuration parameters and the 1 frontend environment variable are documented below:
+The backend configuration parameters and the frontend environment variable are documented below:
 
 ### Backend Variables (Render Environment)
 
 | Variable Name | Required | Default | Recommended Staging Value | Description & Purpose |
 | :--- | :---: | :--- | :--- | :--- |
-| `ENVIRONMENT` | Yes | `development` | `staging` | Runtime environment name. |
+| `ENVIRONMENT` | Yes | `development` | `staging` | Runtime environment name (`staging`/`production` enforces `USER_KEY_ENCRYPTION_SECRET`). |
 | `DATABASE_URL` | Yes | — | `postgresql+psycopg://...@ep-...-pooler.../neondb?sslmode=require` | Pooled Neon PostgreSQL connection URL. |
 | `DATABASE_URL_UNPOOLED` | Yes | `None` | `postgresql+psycopg://...@ep-...aws.neon.tech/neondb?sslmode=require` | Direct Neon PostgreSQL connection URL for Alembic migrations. |
 | `AUTH_SECRET_KEY` | Yes | — | Cryptographically random string (`>= 32 bytes`) | Secret key used for signing customer and guest JWT tokens. |
 | `ACCESS_TOKEN_EXPIRE_MINUTES`| No | `15` | `15` | Customer session JWT expiration duration. |
 | `GUEST_TOKEN_EXPIRE_MINUTES` | No | `15` | `15` | Guest order verification JWT expiration duration. |
 | `OTP_HASH_SECRET` | Recommended | `None` | Cryptographically random string (`>= 16 bytes`) | Salt secret for hashing OTP verification codes in database. |
+| `USER_KEY_ENCRYPTION_SECRET` | Yes (`staging`/`production`) | `None` | Cryptographically random string (`>= 32 bytes`), distinct from `AUTH_SECRET_KEY` and `GEMINI_API_KEY` | Required symmetric encryption key for customer personal Gemini API keys in `staging` and `production`. |
+| `PLATFORM_KEY_ENCRYPTION_SECRET` | Optional (AI Key Vault) | `None` | Cryptographically random string (`>= 32 bytes`), distinct from `AUTH_SECRET_KEY`, `USER_KEY_ENCRYPTION_SECRET`, and `GEMINI_API_KEY` | Optional encryption key for Super Admin stored Platform AI Provider keys in database vault. |
+| `ADMIN_EMAILS` | Yes (for admin bootstrap) | `set()` | Comma-separated or JSON list of normalized super-admin emails | Authorized administrator emails recognized during login/bootstrap. |
 | `GEMINI_API_KEY` | Yes | — | Valid Google AI Studio API key | API key for Gemini assistant models. |
 | `GEMINI_MODEL` | No | `gemini-3.8-flash` | `gemini-3.8-flash` (or `gemini-2.5-flash`) | Gemini model identifier. |
 | `GEMINI_TIMEOUT_SECONDS` | No | `30` | `30` | Timeout in seconds for upstream Gemini API calls. |

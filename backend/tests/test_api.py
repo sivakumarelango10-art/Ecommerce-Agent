@@ -124,3 +124,45 @@ def test_configuration_error_prevents_startup(monkeypatch: pytest.MonkeyPatch):
     with pytest.raises(ConfigurationError, match="Application configuration is invalid"):
         with TestClient(app):
             pass
+
+
+def test_configuration_error_reports_safe_reason_without_exposing_secrets(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+):
+    secret_db_pw = "super_sensitive_db_password_xyz"
+    secret_auth = "super_sensitive_auth_secret_0123456789abcdef"
+    short_user_enc = "secret_short_val"
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.setenv("DATABASE_URL", f"postgresql+psycopg://user:{secret_db_pw}@db.example.com/neondb")
+    monkeypatch.setenv("AUTH_SECRET_KEY", secret_auth)
+    monkeypatch.setenv("GEMINI_API_KEY", "super_sensitive_gemini_key_123")
+    monkeypatch.setenv("USER_KEY_ENCRYPTION_SECRET", short_user_enc)
+
+    with pytest.raises(ConfigurationError) as exc_info:
+        load_settings(env_file=None)
+
+    msg = str(exc_info.value)
+    assert "Application configuration is invalid" in msg
+    assert "USER_KEY_ENCRYPTION_SECRET must be at least 32 bytes" in msg
+    assert secret_db_pw not in msg
+    assert secret_auth not in msg
+    assert short_user_enc not in msg
+    assert secret_db_pw not in caplog.text
+    assert secret_auth not in caplog.text
+    assert short_user_enc not in caplog.text
+
+
+def test_configuration_error_identifies_missing_staging_encryption_secret(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///:memory:")
+    monkeypatch.setenv("AUTH_SECRET_KEY", "test-auth-secret-key-0123456789abcdef")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-sent")
+    monkeypatch.delenv("USER_KEY_ENCRYPTION_SECRET", raising=False)
+
+    with pytest.raises(ConfigurationError) as exc_info:
+        load_settings(env_file=None)
+
+    assert "USER_KEY_ENCRYPTION_SECRET is required in staging and production" in str(exc_info.value)
